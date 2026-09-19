@@ -63,26 +63,35 @@ ceiling in `check.lua` is measured against `dist/`. `dist/` is gitignored, and
 
 ### Finding the real ceiling
 
-13,000 is a conservative line, not a measurement. It decides whether the
-`wip/animal.lua` redesign fits. Measured on hardware so far:
+Measured on hardware with `tools/ceilingprobe.lua`:
 
-| file bytes | prototypes | result |
-| --- | --- | --- |
-| 11,575 | 21 | loads |
-| 12,524 | 19 | loads (`wip/animal.lua`) |
-| 13,750 | **137** | fails, `used 60864 / limit 98304, peak 61128` |
-| 15,670 | 19 | fails |
+| file bytes | prototypes | `lua_used` | free heap | result |
+| --- | --- | --- | --- | --- |
+| 11,575 | 21 | - | - | loads |
+| 12,524 | 19 | - | - | loads (`wip/animal.lua`) |
+| 13,750 | **137** | 60,864 | - | **fails** |
+| 13,750 | 18 | 47,581 | 23,464 | loads |
+| 15,670 | 19 | 51,596 | 18,920 | loads |
+| 15,670 | 19 | - | - | **failed once**, on a fragmented heap |
 
-**Prototype count is its own budget.** That 13,750 row came from the first
-version of the probe, which padded with 137 tiny functions where a real app of
-that size has about 19. Every Lua `Proto` carries a constant array, upvalue
-descriptors, a code array and debug info, so it hit the allocator early and
-measured its own shape rather than its size. The probe now pads at the real
-apps' density, about 750 body bytes per prototype. Read that row as evidence
-about function count, not about bytes.
+**There are two budgets, not one.** Each source byte costs about 2.09 bytes of
+`lua_used`, and **each prototype costs about 112 bytes on top**. The two 13,750
+rows are the same size and differ only in function count: 137 tiny functions
+against 18 realistic ones, and 13,283 bytes of Lua memory between them. The
+practical consequence for app code is that splitting logic into many small
+helpers is not free.
 
-The consequence for app code: splitting logic into many small helper functions
-is not free.
+**The ceiling is not a fixed number.** `wip/animal.lua` failed at 15,670 once
+and a probe of the same size and shape passed later from a clean boot. The
+failure is the system allocator, not the quota - `used` is far below `limit`
+when it happens, and what runs out is the largest contiguous block. So it
+depends on how fragmented the heap is at launch. **Reboot before judging a
+result.** `check.lua` sits at 14,500, a little over 1 KB below the highest
+pass, because the gate wants the largest size that survives a bad heap rather
+than the best case.
+
+Extrapolating the two clean data points, free heap would reach zero near
+23,600 body bytes, but it will fail well before that.
 
 ```bash
 lua tools/ceilingprobe.lua 13750
