@@ -57,6 +57,23 @@ and comments cost a reader nothing while costing the badge real RAM:
 | --- | --- | --- | --- |
 | `apps/bump_pets.lua` | 11,575 | 9,376 | 3,624 |
 
+### Test variants
+
+`build.lua` also emits variants: the real app with a small documented source
+patch, under its own slug, so one can sit beside the real one on a badge.
+
+| file | slug | what |
+| --- | --- | --- |
+| `dist/bump_pets_nohatch.lua` | `bump_nohatch` | Always hatched. For looking at the animal without needing a fresh bump. |
+
+Variants are generated, never hand-maintained - a second copy of the app in
+the repo means every fix has to be made twice, and the copy nobody remembers
+to update is the one someone tests against. If a patch stops matching the app,
+`build.lua` fails rather than silently emitting an unpatched variant.
+
+Delete a variant off the badge when you are done with it. Each installed app
+costs registry memory, and this app has very little to spare.
+
 **Paste `dist/bump_pets.lua` into the IDE, not `apps/bump_pets.lua`.** The
 ceiling in `check.lua` is measured against `dist/`. `dist/` is gitignored, and
 `lua check.lua` regenerates it, so run the gate before you copy.

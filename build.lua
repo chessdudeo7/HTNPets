@@ -14,6 +14,34 @@
 -- build rather than shipping a guess.
 
 local APPS = {"apps/bump_pets.lua", "apps/bump_probe.lua"}
+
+-- Test variants: the real app with a small, documented source patch, built
+-- under its own slug so it can sit beside the real one on a badge.
+--
+-- A variant is generated, never hand-maintained. Keeping a second copy of the
+-- app in the repo would mean every fix had to be made twice, and the copy
+-- nobody remembers to update is the one someone tests against.
+local VARIANTS = {
+  {
+    from = "apps/bump_pets.lua",
+    out = "bump_pets_nohatch.lua",
+    slug = "bump_nohatch",
+    name = "Bump Pets (no egg)",
+    why = "always hatched, for testing the animal without a fresh bump",
+    patches = {
+      {
+        -- Skip arming the egg. S.hatch stays -1 and is never consulted, so
+        -- the creature is drawn from whatever contacts already exist.
+        from = "  if S.hatch < 0 then\n"
+            .. "    S.hatch = S.total\n"
+            .. "    S.dirty = true\n"
+            .. "  end\n"
+            .. "  S.egg = S.total <= S.hatch\n",
+        to = "  S.egg = false\n",
+      },
+    },
+  },
+}
 local OUT = "dist"
 
 local LUA = arg[-1] or "lua"
@@ -148,6 +176,54 @@ for _, path in ipairs(APPS) do
         print(string.format("  %-24s %6d -> %6d bytes  (-%d, %.0f%%)  disassembly identical",
           path, #src, #min, saved, saved / #src * 100))
       end
+    end
+  end
+end
+
+-- Variants are built from the patched source and proved against it, not
+-- against the original: the patch is a deliberate behaviour change, so only
+-- the minification has to be shown to preserve meaning.
+if #VARIANTS > 0 then
+  print("")
+  print("### variants")
+end
+for _, v in ipairs(VARIANTS) do
+  local src = read(v.from)
+  if not src then
+    fail(v.from .. " not found")
+  else
+    local patched, ok = src, true
+    for i, p in ipairs(v.patches) do
+      if not patched:find(p.from, 1, true) then
+        fail(v.out .. ": patch " .. i .. " no longer matches " .. v.from
+          .. "; the variant needs updating with the app")
+        ok = false
+        break
+      end
+      patched = patched:gsub(p.from:gsub("%W", "%%%0"), (p.to:gsub("%%", "%%%%")), 1)
+    end
+
+    if ok then
+      patched = patched:gsub("\nslug=[^\n]*", "\nslug=" .. v.slug, 1)
+      patched = patched:gsub("\nname=[^\n]*", "\nname=" .. v.name, 1)
+
+      local tmp = OUT .. "/.variant_src.lua"
+      write(tmp, patched)
+      local min, err = minify(patched)
+      if not min then
+        fail(v.out .. ": " .. err)
+      else
+        local out_path = OUT .. "/" .. v.out
+        write(out_path, min)
+        local eq, why = equivalent(tmp, out_path)
+        if not eq then
+          fail(v.out .. ": " .. why)
+        else
+          print(string.format("  %-26s %6d bytes  slug=%-14s %s",
+            v.out, #min, v.slug, v.why))
+        end
+      end
+      os.remove(tmp)
     end
   end
 end
