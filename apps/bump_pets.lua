@@ -84,17 +84,12 @@ C.pw = function(n, w, h, c, r)
   x:style({bg_color = c, radius = r, border_width = 0})
 end
 
+-- Coats are restricted to 12..57 degrees, the red-to-yellow arc, so five
+-- sixths of the colour wheel were unreachable once the celebration stopped
+-- using it. A caller outside that range gets a wrong colour, not an error.
 local function hue(x)
-  x = x % 360
-  local s = x // 60
-  local u = (200 * (x - s * 60)) // 60 + 55
-  local d = 310 - u
-  if s == 0 then return 255, u, 55 end
-  if s == 1 then return d, 255, 55 end
-  if s == 2 then return 55, 255, u end
-  if s == 3 then return 55, d, 255 end
-  if s == 4 then return u, 55, 255 end
-  return 255, 55, d
+  local u = (200 * (x % 60)) // 60 + 55
+  return 255, u, 55
 end
 
 local function hex(r, g, b) return r * 65536 + g * 256 + b end
@@ -132,24 +127,19 @@ local function scan_one()
   S.total = P.i
   local id = c.badge_id
   if type(id) ~= "string" then id = tostring(id) end
-  local ln = #id
-  local s2 = ln - 11
-  if s2 < 1 then s2 = 1 end
-  local h = 5381 + ln
-  local a, b, d, e, f, g = string.byte(id, 1, 6)
+  local h = 5381 + #id
+  -- Six bytes from both ends is enough: h only feeds P.fold, and P.fold only
+  -- picks a coat hue out of 46. It stopped needing to separate individual
+  -- contacts when the hash ring was removed and strokes took their colours
+  -- from C.ART instead.
+  local a, b, d = string.byte(id, 1, 3)
   h = (h * 33 + (a or 1)) % 16777213
   h = (h * 33 + (b or 2)) % 16777213
   h = (h * 33 + (d or 3)) % 16777213
-  h = (h * 33 + (e or 4)) % 16777213
-  h = (h * 33 + (f or 5)) % 16777213
-  h = (h * 33 + (g or 6)) % 16777213
-  a, b, d, e, f, g = string.byte(id, s2 + 6, s2 + 11)
-  h = (h * 33 + (a or 19)) % 16777213
-  h = (h * 33 + (b or 20)) % 16777213
-  h = (h * 33 + (d or 21)) % 16777213
-  h = (h * 33 + (e or 22)) % 16777213
-  h = (h * 33 + (f or 23)) % 16777213
-  h = (h * 33 + (g or 24)) % 16777213
+  a, b, d = string.byte(id, #id - 2, #id)
+  h = (h * 33 + (a or 4)) % 16777213
+  h = (h * 33 + (b or 5)) % 16777213
+  h = (h * 33 + (d or 6)) % 16777213
   P.fold = (P.fold * 33 + h) % 16777213
   local slot = (P.i - 1) % 16 + 1
   local nm = "?"
@@ -416,8 +406,7 @@ local function leds(now)
     for i = 1, 6 do
       local q = lv - ((i - 1 - st) % 6) * 34
       if q < 0 then q = 0 end
-      local r, g, b = hue(now // 4 + i * 60)
-      badge.led.set(C.CW[i], dim(r, q), dim(g, q), dim(b, q))
+      badge.led.set(C.CW[i], dim(S.pr, q), dim(S.pg, q), dim(S.pb, q))
     end
   elseif S.egg then
     -- The egg is the front door: every badge starts here, and it is the
@@ -513,7 +502,10 @@ local function step(now)
       local cap = (free - 6000) // 112
       if cap > C.MAXS then cap = C.MAXS end
       if cap < C.MINS then cap = C.MINS end
-      local n = S.total * 4
+      -- Two strokes per contact, not four. Four fills the canvas faster
+      -- but hits the heap cap at half the contact count, and plateauing
+      -- at thirteen friends is worse than a sparser start.
+      local n = S.total * 2
       if n > cap then n = cap end
       badge.sys.log("paint free=" .. free .. " cap=" .. cap .. " n=" .. n)
       if S.egg then n = 0 end
