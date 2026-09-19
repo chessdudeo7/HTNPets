@@ -181,6 +181,28 @@ for _, mode in ipairs({{"egg", ""}, {"hatched", " hatched"}}) do
   end
 end
 
+-- Variants ship, so they are gated too. A patch that stops matching is caught
+-- by build.lua; this catches one that matches but breaks the app.
+do
+  local v = "dist/bump_pets_nohatch.lua"
+  local f = io.open(v)
+  if not f then
+    fail("variant " .. v .. " was not built")
+  else
+    f:close()
+    for _, n in ipairs({0, 12, 200}) do
+      local out = sh(q(LUA) .. " test/mockbadge.lua " .. q(v) .. " " .. n)
+      if out and out:find("RESULT    pass") then
+        print(string.format("  no-egg   %3d contacts  pass", n))
+      else
+        print(string.format("  no-egg   %3d contacts  FAIL", n))
+        for l in (out or ""):gmatch("[^\n]+") do print("      " .. l) end
+        status = 1
+      end
+    end
+  end
+end
+
 print("")
 if status == 0 then
   print("ALL CHECKS PASSED - safe to push to the badge")
