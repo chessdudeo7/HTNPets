@@ -35,7 +35,10 @@ from PIL import Image, ImageEnhance, ImageFilter
 
 W, H = 320, 240
 COUNTS = [8, 20, 40, 80]
-STROKES = 4      # strokes painted per contact
+# Must track the app. apps/bump_pets.lua paints S.total * STROKES,
+# capped by free heap; a mock that disagrees explores a design that
+# is not the one shipping.
+STROKES = 2
 PALETTE = 10     # colours the badge will ship
 
 # Per-background tuning. One global contrast setting cannot serve both: the
