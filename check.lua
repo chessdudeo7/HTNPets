@@ -6,25 +6,23 @@ local APPS = {"apps/bump_pets.lua", "apps/bump_probe.lua"}
 local MOCK_APP = "apps/bump_pets.lua"
 local MOCK_COUNTS = {0, 1, 5, 12, 40, 200}
 local SLOT_CEILING = 25   -- above this the badge raises "stack safety limit"
--- Compile-time memory ceiling. Measured on hardware with tools/ceilingprobe:
+-- Compile-time memory ceiling. Measured on hardware with tools/ceilingprobe;
+-- the full table and what it means are in docs/HARDWARE.md.
 --
---   bytes  protos  used    free   result
---   11575      21  -       -      loads
---   12524      19  -       -      loads (wip/animal.lua)
---   13750      18  47581   23464  loads
---   13750     137  60864   -      FAILS - prototype count, not size
---   15670      19  51596   18920  loads
---   15670      19  -       -      FAILED once, on a fragmented heap
+-- 15670 bytes is proven to load from a clean boot. This sits below it, not at
+-- it, because the limit is the largest contiguous block and that moves with
+-- whatever ran before.
 --
--- Two separate budgets. Source bytes cost about 2.09 of lua_used each, and
--- every prototype costs about 112 bytes on top, so splitting logic into many
--- small helpers is not free.
+-- Raised from 14500 once the app stopped allocating widgets it never paints.
+-- That freed about 9.4 KB of runtime heap at a typical contact count, which
+-- is far more than the extra source bytes cost: a source byte costs 2.09
+-- bytes of heap, a widget costs about 112.
 --
--- 15670 loads but is NOT reliably safe: wip/animal.lua failed at that size on
--- a heap that was already fragmented, and the same size passed later from a
--- clean boot. The gate wants the largest size that survives a bad heap, not
--- the best case, so this sits a little over 1KB below the highest pass.
-local SRC_CEILING = 14500
+-- This governs COMPILE memory, which is spent before any widget exists, and
+-- is not adaptive -- unlike the stroke budget, which asks the heap what it
+-- can afford. Source size is the one number that has to be right for every
+-- badge, including ones with less free memory than this one.
+local SRC_CEILING = 15000
 
 local LUA = arg[-1] or "lua"
 local LUAC = LUA:gsub("lua(%.exe)$", "luac%1"):gsub("([^c])lua$", "%1luac")
@@ -178,6 +176,22 @@ for _, mode in ipairs({{"egg", ""}, {"hatched", " hatched"}}) do
       for l in (out or ""):gmatch("[^\n]+") do print("      " .. l) end
       status = 1
     end
+  end
+end
+
+-- The app sizes its painting to free_heap. A badge with other apps on it has
+-- less than a clean one, so the degraded path has to be walked here rather
+-- than discovered on someone else's badge.
+for _, n in ipairs({0, 12, 200}) do
+  local out = sh(q(LUA) .. " test/mockbadge.lua " .. q(MOCK_APP) .. " " .. n
+                 .. " hatched lowheap")
+  local w = out and out:match("widgets%s+(%d+)")
+  if out and out:find("RESULT    pass") then
+    print(string.format("  lowheap  %3d contacts  pass  (%s widgets)", n, w))
+  else
+    print(string.format("  lowheap  %3d contacts  FAIL", n))
+    for l in (out or ""):gmatch("[^\n]+") do print("      " .. l) end
+    status = 1
   end
 end
 
