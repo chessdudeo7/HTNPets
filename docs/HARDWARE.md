@@ -15,15 +15,37 @@ because most of it cost hours to find and none of it is in the vendor guide.
 
 ## The memory model
 
-Lua's cost is linear in source size, and the relation is tight:
+There are two numbers and they are not the same. `lua_used` is Lua's own
+accounting. What actually runs out is **system heap**, which is larger,
+because the allocator adds block headers, alignment and fragmentation.
 
-| source bytes | predicted `lua_used` | measured | free heap after |
+`lua_used` is linear in source size, measured with probes:
+
+| source bytes | predicted `lua_used` | measured |
+| --- | --- | --- |
+| 13,667 | 46,334 | 47,581 |
+| 15,587 | 50,174 | 51,596 |
+
+So `lua_used ~= 19000 + 2.09 * bytes`.
+
+**But budget against system heap, not that.** Measured from the `free` delta
+either side of launching the real app:
+
+| source bytes | predicted `lua_used` | system heap consumed | ratio |
 | --- | --- | --- | --- |
-| 13,667 | 46,334 | 47,581 | 23,464 |
-| 15,587 | 50,174 | 51,596 | 18,920 |
+| 13,793 | 47,827 | 58,024 | 1.21 |
+| 14,717 | 49,759 | 61,004 | 1.23 |
 
-So `19000 + 2.09 * bytes`, accurate to about 1,400 bytes. That is the number to
-budget against.
+About **22% more than `lua_used`**, so roughly
+`system heap ~= 23000 + 2.55 * bytes`.
+
+Getting this wrong shipped a bug. An app sized its painting from
+`free_heap - 14000`, on the assumption that a 14,717-byte app would leave
+about 24 KB free. It leaves 11,920. The budget went negative, clamped to zero,
+and the app drew a creature in front of an empty sky.
+
+**A source byte costs about 2.55 bytes of heap; a widget costs about 112.**
+Cutting 1,000 source bytes buys roughly 22 widgets.
 
 **Prototype count is a second budget.** Each Lua `Proto` carries a constant
 array, upvalue descriptors, a code array and debug info. Two apps of the same
