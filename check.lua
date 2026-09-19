@@ -6,12 +6,25 @@ local APPS = {"apps/bump_pets.lua", "apps/bump_probe.lua"}
 local MOCK_APP = "apps/bump_pets.lua"
 local MOCK_COUNTS = {0, 1, 5, 12, 40, 200}
 local SLOT_CEILING = 25   -- above this the badge raises "stack safety limit"
--- Compile-time memory ceiling, measured on hardware:
---   11575 bytes  compiles and runs
---   15670 bytes  "Lua memory limit exceeded" in main.lua, before on_enter
--- The whole chunk is parsed and compiled before any callback, and that peak
--- is what blows. Stay well under.
-local SRC_CEILING = 13000
+-- Compile-time memory ceiling. Measured on hardware with tools/ceilingprobe:
+--
+--   bytes  protos  used    free   result
+--   11575      21  -       -      loads
+--   12524      19  -       -      loads (wip/animal.lua)
+--   13750      18  47581   23464  loads
+--   13750     137  60864   -      FAILS - prototype count, not size
+--   15670      19  51596   18920  loads
+--   15670      19  -       -      FAILED once, on a fragmented heap
+--
+-- Two separate budgets. Source bytes cost about 2.09 of lua_used each, and
+-- every prototype costs about 112 bytes on top, so splitting logic into many
+-- small helpers is not free.
+--
+-- 15670 loads but is NOT reliably safe: wip/animal.lua failed at that size on
+-- a heap that was already fragmented, and the same size passed later from a
+-- clean boot. The gate wants the largest size that survives a bad heap, not
+-- the best case, so this sits a little over 1KB below the highest pass.
+local SRC_CEILING = 14500
 
 local LUA = arg[-1] or "lua"
 local LUAC = LUA:gsub("lua(%.exe)$", "luac%1"):gsub("([^c])lua$", "%1luac")
