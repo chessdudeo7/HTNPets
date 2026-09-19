@@ -32,6 +32,8 @@ local C = {SCAN = 200, MAXS = 120, BG = 0x0b0f14}
 -- Bumps that unlock the starfield leds. SET THIS TO 25 FOR THE EVENT; it is
 -- low now so the effect can be tested without first meeting 25 people.
 C.STAR = 5
+-- Strokes painted however tight the heap is. See the budget in step 3.
+C.MINS = 24
 C.CW = {1, 2, 3, 4, 5, 6}
 C.AT = {1, 2, 3, 5, 7, 10, 14, 19, 25, 32, 40, 50}
 -- name, ear w, ear h, ear radius, ear spread, tail -- all as 34ths of the
@@ -496,11 +498,24 @@ local function step(now)
       -- costs about 112 bytes of system heap, and a badge with other apps
       -- on it has less than this one -- which is every badge this app gets
       -- shared to. A count tuned here would fail there.
-      local cap = (badge.sys.stats().free_heap - 14000) // 112
+      --
+      -- The reserve is 6000, not 14000. 14000 was a guess, and it was wrong
+      -- in the worst way: on a badge reporting less than that the cap went
+      -- to zero and the painting disappeared entirely, with a creature and
+      -- an empty sky. A degradation path that degrades to nothing is not a
+      -- degradation path.
+      --
+      -- C.MINS strokes are painted whatever the heap says. The previous
+      -- build ran 148 widgets down to 2.2 KB free, so the floor costs less
+      -- than a badge that cannot afford it would survive anyway, and having
+      -- a painting at all matters more than the last kilobyte.
+      local free = badge.sys.stats().free_heap
+      local cap = (free - 6000) // 112
       if cap > C.MAXS then cap = C.MAXS end
-      if cap < 0 then cap = 0 end
+      if cap < C.MINS then cap = C.MINS end
       local n = S.total * 4
       if n > cap then n = cap end
+      badge.sys.log("paint free=" .. free .. " cap=" .. cap .. " n=" .. n)
       if S.egg then n = 0 end
       P.n = n
       local k = 1

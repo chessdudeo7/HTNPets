@@ -99,7 +99,7 @@ function Widget:style(t, sel)
   end
 end
 
-local lowheap = false   -- set from argv below; declared here so that
+local heapmode = nil    -- set from argv below; declared here so that
                         -- badge.sys.stats closes over the local
 local store, now = {}, 0
 local logs = {}
@@ -187,7 +187,7 @@ badge = {
     stats = function()
       return {lua_used = 30000, lua_limit = 98304, lua_peak = 31000,
               widgets = widgets, uptime_ms = now,
-              free_heap = lowheap and 18000 or 40000}
+              free_heap = heapmode or 40000}
     end,
     version = function() return "mock" end,
   },
@@ -222,7 +222,9 @@ for i = 1, 5 do
   if arg[i] == "hatched" then hatched = true end
   -- An app that sizes itself to free_heap needs its low-memory path walked,
   -- or the degraded case only ever runs on someone else's badge.
-  if arg[i] == "lowheap" then lowheap = true end
+  if arg[i] == "lowheap" then heapmode = 18000 end
+  -- Less than the app reserves, so the floor has to hold.
+  if arg[i] == "starved" then heapmode = 4000 end
 end
 if hatched then store.hatch = 0 end
 
