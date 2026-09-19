@@ -5,13 +5,17 @@ because most of it cost hours to find and none of it is in the vendor guide.
 
 ## The short version
 
-- A Lua app needs roughly **19,000 + 2.09 bytes of heap per source byte**.
-- **Connect eats ~51 KB and does not give it back.** After using it, no useful
-  Lua app can start until the badge reboots.
+- **A widget costs about 112 bytes of system heap. A source byte costs 1.4 to
+  2.5.** Widgets are the expensive thing by a factor of about fifty.
+- **Connect takes ~51 KB for BLE and does not release it.** After using it, no
+  useful Lua app can start until the badge reboots.
 - The failure is the **system allocator**, not the Lua quota. `used` is far
   below `limit` when it happens.
-- **Reboot before judging any result.** The same app and size both passes and
-  fails depending on what ran before it.
+- **What runs out is the largest contiguous block**, so the same app and size
+  both passes and fails depending on what ran before. **Reboot before judging
+  any result.**
+- **Run-to-run variance in free heap is about 900 bytes**, so a saving smaller
+  than that cannot be measured by launching the app twice.
 
 ## The memory model
 
@@ -36,16 +40,38 @@ either side of launching the real app:
 | 13,793 | 47,827 | 58,024 | 1.21 |
 | 14,717 | 49,759 | 61,004 | 1.23 |
 
-About **22% more than `lua_used`**, so roughly
-`system heap ~= 23000 + 2.55 * bytes`.
+About 22% more than `lua_used`, because the allocator adds block headers,
+alignment and fragmentation.
 
-Getting this wrong shipped a bug. An app sized its painting from
-`free_heap - 14000`, on the assumption that a 14,717-byte app would leave
-about 24 KB free. It leaves 11,920. The budget went negative, clamped to zero,
-and the app drew a creature in front of an empty sky.
+**The per-byte figure is not settled.** Comparing those two builds gives 2.55
+bytes of heap per source byte. Measuring a 563-byte cut *within* one build gave
+776 bytes of heap, a ratio of 1.4. Two points across different apps and one
+delta within an app disagree, so treat anything between **1.4 and 2.5** as the
+plausible range and do not plan around the precise number.
 
-**A source byte costs about 2.55 bytes of heap; a widget costs about 112.**
-Cutting 1,000 source bytes buys roughly 22 widgets.
+**What is settled: a widget costs about 112 bytes.** Measured against the
+28-widget build (58,024 consumed) and the 148-widget one (71,448). That is
+roughly fifty times what a source byte costs, so **widgets are the lever**.
+Cutting 1,000 source bytes buys somewhere between 12 and 22 widgets; not
+allocating 84 widgets you never draw buys 9,400 bytes outright.
+
+**Run-to-run variance is about 900 bytes.** One measurement pair differed by
+868 bytes of starting free heap purely from how fragmented the boot was. A
+saving smaller than that cannot be confirmed by launching twice.
+
+### Two bugs this model caused
+
+**Sizing a feature from a guessed reserve.** The painting budgeted itself from
+`free_heap - 14000`, on the assumption that a 14,717-byte app leaves about
+24 KB free. It leaves 11,920. The budget went negative, clamped to zero, and
+the app drew a creature in front of an empty sky. Anything that adapts to free
+memory needs a **floor** and a **log line**, or it fails silently.
+
+**Allocating widgets that are never drawn.** The painting created `C.MAXS`
+stroke widgets and hid the ones it did not paint. Hiding a widget does not free
+it. At 9 contacts that was 84 widgets and 9.4 KB held by invisible objects, and
+it left the app running on 2.2 KB of system heap with a low-water mark of 532
+bytes. That is why failures looked random for hours.
 
 **Prototype count is a second budget.** Each Lua `Proto` carries a constant
 array, upvalue descriptors, a code array and debug info. Two apps of the same
@@ -146,12 +172,24 @@ lua tools/ceilingprobe.lua 13750 14500      # padded apps at exact sizes
 Each probe gets its own slug so several can be installed at once. Push them,
 then open each. It prints its own size and heap stats, or dies in `main.lua`.
 
-Read `heap` in the IDE console before launching anything, and treat
-`sys_largest` as the number that matters, not `sys_free`.
+Read `heap` in the IDE console, and treat `sys_largest` as the number that
+matters, not `sys_free`. Read it **while the app is open** as well as before:
+the two answer different questions, and the running number is the one that
+says whether there is any margin.
 
-**A probe perturbs what it measures.** Padding with many tiny functions
-measures prototype overhead rather than size; installing several probes costs
-registry memory. Both of those produced wrong answers here before being caught.
+**A probe perturbs what it measures**, in at least three ways that all produced
+wrong answers here before being caught:
+
+- Padding with many tiny functions measures prototype overhead, not size.
+- Installing several probes costs registry memory; four were enough to stop the
+  real app loading.
+- Starting free heap varies by ~900 bytes between boots, which is larger than
+  most savings worth making.
+
+**An app can log its own view.** `badge.sys.stats().free_heap` read at runtime
+is how the painting sizes itself, and printing that decision with
+`badge.sys.log` is what turned "nine friends, zero strokes" from a mystery into
+a one-line diagnosis.
 
 ## Smaller things
 

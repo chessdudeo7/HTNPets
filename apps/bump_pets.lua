@@ -18,7 +18,7 @@ wake_lock=1
 -- message is "use an explicit bounded work queue", so on_enter does almost
 -- nothing: it draws a loading label and returns.  All real work happens one
 -- small step per on_tick, driven by P.step.  ONE contact is hashed per tick;
--- at most EIGHT widgets are created or styled per tick.
+-- four creature widgets or eight strokes are made per tick.
 --
 -- Do not move work back into on_enter.  Do not wrap string.byte in a loop.
 -- Keep state in these tables, not in file-level locals: each local costs a
@@ -64,8 +64,9 @@ local S = {
   -- open. Everyone hatches on their NEXT bump, however many contacts they
   -- already had. egg is derived from it on every scan.
   hatch = -1, egg = true,
-  -- ns strokes are painted, k of them per contact. cur is the contact the
-  -- attribution cursor is on, 0 for none; nm is a ring of names.
+  -- The stroke count and strokes-per-contact live on P, not here. cur is the
+  -- contact the attribution cursor is on, 0 for none; nm is a ring of the
+  -- last 16 names, which is why only those contacts can be pointed at.
   cur = 0, sel = 0, base = 0, poff = 0, nm = {},
   -- nlo is the first stroke a newly met contact painted, 0 for none;
   -- npul is the border width currently on them, so the pulse only
@@ -161,9 +162,10 @@ end
 local function meta()
   S.stage = stage_of(S.total)
   -- The stroke budget was decided when the scan finished, before any widget
-  -- was made. Four per contact until the heap runs out, then it plateaus:
-  -- below the cap every new friend adds four strokes, above it the painting
-  -- is full and growth shows in the animal, the counter and the banner.
+  -- was made, and lives on P. Two per contact until the heap cap is reached,
+  -- then it plateaus: below the cap every new friend adds two strokes, above
+  -- it the painting is full and growth shows in the animal, the counter and
+  -- the banner.
   local k, n = P.k, P.n
   -- Past C.MAXS strokes the painting covers the most RECENT contacts, not
   -- the first: the name ring holds the last 16, so painting from the front

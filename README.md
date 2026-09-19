@@ -4,20 +4,41 @@ Badge apps for Hack the North 2026. The repo is the source of truth; the
 [Badge IDE](https://badge.hackthenorth.com/ide/) is only the flashing tool —
 its workspace lives in browser localStorage, so nothing is safe there.
 
+## Picking this up
+
+| you want | read |
+| --- | --- |
+| how the app is built, and why it is shaped like that | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| what the badge does to you, measured | [`docs/HARDWARE.md`](docs/HARDWARE.md) |
+| what is left to do | [`docs/TODO.md`](docs/TODO.md) |
+
+**Two things to know before changing anything.**
+
+A **widget costs about 112 bytes of system heap and a source byte costs 1.4 to
+2.5**, so widgets are the expensive thing by roughly fifty to one. The app
+already runs close to the edge; check `heap` on the badge, not just the gate.
+
+And **`lua check.lua` passing does not mean it works.** The gate is headless.
+It cannot see timing, LVGL allocation, or whether anything looks right. Every
+real bug in this repo so far was found on hardware or in a renderer, not by
+the gate - the gate's job is to stop the ones that already happened from
+happening again.
+
 ## Apps
 
 | File | Slug | What |
 | --- | --- | --- |
-| `apps/bump_pets.lua` | `htn_bump_pets` | The pet. A creature built from your Connect contacts. |
+| `apps/bump_pets.lua` | `htn_bump_pets` | The pet. A creature in front of a painting made from your Connect contacts. |
 | `apps/bump_probe.lua` | `bump_probe` | Read-only diagnostic. Push this first on a new badge. |
 
-`apps/bump_pets.lua` used to be a segmented worm, and `wip/animal.lua` an
-unfinished round-animal redesign shelved for being over the compile-memory
-ceiling. The animal became the app; the worm is in git history.
+`build.lua` also emits `dist/bump_pets_nohatch.lua` (slug `bump_nohatch`), the
+same app with the egg patched out, so the creature can be looked at without
+finding someone new to bump. It installs beside the real one; delete it off
+the badge when done, because installed apps cost registry memory.
 
 Each file is a complete app in the single-file format: the `--[==[badge-app`
 header becomes `manifest.cfg`, everything after `]==]` becomes `main.lua`.
-Keep them single-file — the format only packages those two, so extra modules
+Keep them single-file - the format only packages those two, so extra modules
 would have to be maintained by hand in the IDE.
 
 ## Check before every push
@@ -44,11 +65,13 @@ instruction streams with line markers and heap addresses normalised out. A
 mismatch fails the build instead of shipping a guess.
 
 This matters because the compile-memory ceiling is spent on **source bytes**,
-and comments cost a reader nothing while costing the badge real RAM:
+and comments cost a reader nothing while costing the badge real RAM. The gate
+prints the current numbers, so they are not repeated here to go stale:
 
-| | source | dist | ceiling | headroom |
-| --- | --- | --- | --- | --- |
-| `apps/bump_pets.lua` | 22,090 | 14,458 | 14,500 | 42 |
+```
+apps/bump_pets.lua   NNNNN ->  NNNNN bytes  (-NNNN, NN%)  disassembly identical
+    dist NNNNN bytes  (headroom NNN)
+```
 
 ### Test variants
 
