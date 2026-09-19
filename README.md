@@ -63,9 +63,26 @@ ceiling in `check.lua` is measured against `dist/`. `dist/` is gitignored, and
 
 ### Finding the real ceiling
 
-13,000 is a conservative line, not a measurement. Known on hardware: 11,575
-loads, 12,524 loads, 15,670 fails. The real boundary is somewhere in between,
-and it decides whether the `wip/animal.lua` redesign fits.
+13,000 is a conservative line, not a measurement. It decides whether the
+`wip/animal.lua` redesign fits. Measured on hardware so far:
+
+| file bytes | prototypes | result |
+| --- | --- | --- |
+| 11,575 | 21 | loads |
+| 12,524 | 19 | loads (`wip/animal.lua`) |
+| 13,750 | **137** | fails, `used 60864 / limit 98304, peak 61128` |
+| 15,670 | 19 | fails |
+
+**Prototype count is its own budget.** That 13,750 row came from the first
+version of the probe, which padded with 137 tiny functions where a real app of
+that size has about 19. Every Lua `Proto` carries a constant array, upvalue
+descriptors, a code array and debug info, so it hit the allocator early and
+measured its own shape rather than its size. The probe now pads at the real
+apps' density, about 750 body bytes per prototype. Read that row as evidence
+about function count, not about bytes.
+
+The consequence for app code: splitting logic into many small helper functions
+is not free.
 
 ```bash
 lua tools/ceilingprobe.lua 13750
