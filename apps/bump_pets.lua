@@ -449,9 +449,13 @@ local function leds(now)
     -- than a slow fade, which is what reads as a twinkle. The offsets are
     -- squared because evenly spaced ones make the six ramp in order, which
     -- reads as a wave travelling round the badge instead of as stars.
+    -- Peak is 63% of brightness rather than 88%: at full it read as harsh
+    -- rather than as a night sky. The floor stays near black so a star can
+    -- go out. Periods are long for the same reason - fast twinkling is
+    -- agitated, and this sits behind everything else on the badge.
     for i = 1, 6 do
-      local b = breath(now + i * i * 631 % 2600, 1500 + i * 230)
-      local q = lv * (10 + b * b // 125) // 100
+      local b = breath(now + i * i * 631 % 2600, 2100 + i * 310)
+      local q = lv * (8 + b * b // 180) // 100
       badge.led.set(C.CW[i], dim(190, q), dim(215, q), q)
     end
   else
