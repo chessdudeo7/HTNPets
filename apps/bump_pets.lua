@@ -307,7 +307,14 @@ local function stat_line()
     local idx = S.base + S.cur
     return "#" .. idx .. "  " .. (S.nm[(idx - 1) % 16 + 1] or "?")
   end
-  return S.total .. " friends    " .. P.n .. " strokes"
+  -- Say what the leds are waiting for. B already works below the threshold
+  -- -- it toggles the coat glow -- so the thing that unlocks is the stars,
+  -- and calling it "lights" would be wrong.
+  -- Two spaces, not three: at font 16 the longest form of this line is
+  -- about 272px of the 320 available, and three spaces pushes it to 296.
+  local t = S.total .. " friends  " .. P.n .. " strokes"
+  if S.total < C.STAR then t = t .. "  stars at " .. C.STAR end
+  return t
 end
 
 local function finish()
