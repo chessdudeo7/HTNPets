@@ -1,13 +1,13 @@
 --[==[badge-app
-slug=htn_symbiote
-name=Symbiote
-icon=SYM
+slug=htn_bump_pets
+name=Bump Pets
+icon=BUMP
 api=2
-heap_kb=48
+heap_kb=96
 wake_lock=1
 ]==]
 
--- Symbiote -- your pet is made of the people you have met.
+-- Bump Pets -- your pet is made of the people you have met.
 -- Bump badges with the built-in Connect app; every contact adds a segment
 -- coloured from that badge ID.  Rare roles grow spikes.
 --

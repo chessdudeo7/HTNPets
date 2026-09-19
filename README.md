@@ -1,4 +1,4 @@
-# HTNPets
+# HTNPets — Bump Pets
 
 Badge apps for Hack the North 2026. The repo is the source of truth; the
 [Badge IDE](https://badge.hackthenorth.com/ide/) is only the flashing tool —
@@ -8,8 +8,8 @@ its workspace lives in browser localStorage, so nothing is safe there.
 
 | File | Slug | What |
 | --- | --- | --- |
-| `apps/symbiote.lua` | `htn_symbiote` | The pet. A creature built from your Connect contacts. |
-| `apps/sym_probe.lua` | `sym_probe` | Read-only feasibility probe. Push this first. |
+| `apps/bump_pets.lua` | `htn_bump_pets` | The pet. A creature built from your Connect contacts. |
+| `apps/bump_probe.lua` | `bump_probe` | Read-only feasibility probe. Push this first. |
 
 Each file is a complete app in the single-file format: the `--[==[badge-app`
 header becomes `manifest.cfg`, everything after `]==]` becomes `main.lua`.
@@ -19,7 +19,7 @@ have to be maintained by hand in the IDE.
 ## Pushing to a badge
 
 ```bash
-cat apps/symbiote.lua | clip
+cat apps/bump_pets.lua | clip
 ```
 
 Then in the IDE: **Import app** → paste → check the slug → **Replace editor

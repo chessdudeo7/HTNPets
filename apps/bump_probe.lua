@@ -1,12 +1,12 @@
 --[==[badge-app
-slug=sym_probe
-name=Symbiote Probe
-icon=SYM?
+slug=bump_probe
+name=Bump Pets Probe
+icon=BP?
 api=2
 heap_kb=48
 ]==]
 
--- Read-only probe for the Symbiote design.
+-- Read-only probe for the Bump Pets design.
 -- Answers: does badge.contacts see the Connect book, are received_unix
 -- stamps real, and what does badge.me actually hand us?
 --
@@ -89,7 +89,7 @@ local function show_detail()
 end
 
 function on_enter(root)
-  local head = badge.ui.label(root, "Symbiote Probe")
+  local head = badge.ui.label(root, "Bump Pets Probe")
   head:align("top_mid", 0, 6)
 
   local me = badge.ui.label(root, "")
