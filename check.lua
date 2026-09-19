@@ -41,6 +41,18 @@ local BANNED = {
   "os%.", "io%.", "coroutine%.", "package%.", "debug%.",
 }
 
+print("### build")
+do
+  local out, ok = sh(q(LUA) .. " build.lua")
+  for l in (out or ""):gmatch("[^\n]+") do
+    if not l:match("^###") then print("  " .. l:gsub("^%s+", "")) end
+  end
+  if not ok then
+    fail("build.lua failed; dist/ is not trustworthy")
+  end
+end
+
+print("")
 print("### lint")
 for _, path in ipairs(APPS) do
   local f = io.open(path)
@@ -81,14 +93,26 @@ for _, path in ipairs(APPS) do
       local _, n = upto:gsub("\n", "")
       fail("non-ASCII byte at line " .. (n + 1) .. " (fonts render these as squares)")
     end
-    if #src > 49152 then
-      fail("over the 48 KiB Share bundle cap; cannot be shared badge to badge")
-    end
-    if #src > SRC_CEILING then
-      fail(string.format(
-        "%d bytes is over the %d byte compile-memory ceiling; the badge will "
-        .. "raise \"Lua memory limit exceeded\" in main.lua before on_enter runs",
-        #src, SRC_CEILING))
+    -- The ceiling applies to what actually gets pasted into the IDE, which is
+    -- the minified copy in dist/, not this readable source.  build.lua proves
+    -- the two compile to the same instruction stream.
+    local df = io.open("dist/" .. path:match("([^/]+)$"))
+    if not df then
+      fail("no dist/ output; run `lua build.lua` first")
+    else
+      local dist = df:read("a")
+      df:close()
+      print(string.format("    dist %d bytes  (headroom %d)", #dist,
+                          SRC_CEILING - #dist))
+      if #dist > 49152 then
+        fail("over the 48 KiB Share bundle cap; cannot be shared badge to badge")
+      end
+      if #dist > SRC_CEILING then
+        fail(string.format(
+          "dist is %d bytes, over the %d byte compile-memory ceiling; the badge "
+          .. "will raise \"Lua memory limit exceeded\" in main.lua before "
+          .. "on_enter runs", #dist, SRC_CEILING))
+      end
     end
 
     local out, ok = sh(q(LUAC) .. " -p " .. q(path))

@@ -13,9 +13,14 @@ its workspace lives in browser localStorage, so nothing is safe there.
 
 `wip/animal.lua` is an unfinished redesign that replaces the segmented worm
 with a round animal — four species, contacts as coloured spots, blinking.
-It is complete and passes the headless harness, but at 15,670 bytes it is
-over the compile-memory ceiling and dies in `main.lua` on the badge. Finish
-it by getting it under ~12 KB, not by raising `heap_kb`.
+It is complete and passes the headless harness. At 15,670 bytes of source it
+was 2,670 over the compile-memory ceiling and died in `main.lua` on the badge.
+
+**Minified it is 12,524 bytes, which is under the ceiling with 476 to spare.**
+That is worth one push to find out, but treat it as untested: 13,000 is a
+conservative line drawn between one measurement that ran (11,575) and one that
+failed (15,670), so 12,524 sits in the band nobody has probed. If it dies in
+`main.lua`, the ceiling is real and lower than 12,524 — record the number.
 
 Each file is a complete app in the single-file format: the `--[==[badge-app`
 header becomes `manifest.cfg`, everything after `]==]` becomes `main.lua`.
@@ -32,9 +37,36 @@ would have to be maintained by hand in the IDE.
 lua check.lua
 ```
 
-Lint, Lua syntax, the value-stack slot budget, and a headless run of the real
-app against a mock badge API at 0, 1, 5, 12, 40 and 200 contacts. Exits
+Build, lint, Lua syntax, the value-stack slot budget, and a headless run of the
+real app against a mock badge API at 0, 1, 5, 12, 40 and 200 contacts. Exits
 non-zero on failure. If this fails, pushing will fail.
+
+## The build step, and why you paste from dist/
+
+`build.lua` (run for you by `check.lua`) writes a byte-reduced copy of each app
+into `dist/`. It removes whole-line comments and leading indentation, never
+reflows code, and never touches a line that is not entirely a comment. It then
+proves the result by disassembling both copies with `luac -l` and comparing the
+instruction streams with line markers and heap addresses normalised out. A
+mismatch fails the build instead of shipping a guess.
+
+This matters because the compile-memory ceiling is spent on **source bytes**,
+and comments cost a reader nothing while costing the badge real RAM:
+
+| | source | dist | headroom to 13,000 |
+| --- | --- | --- | --- |
+| `apps/bump_pets.lua` | 11,575 | 9,376 | 3,624 |
+
+**Paste `dist/bump_pets.lua` into the IDE, not `apps/bump_pets.lua`.** The
+ceiling in `check.lua` is measured against `dist/`. `dist/` is gitignored, and
+`lua check.lua` regenerates it, so run the gate before you copy.
+
+### A note on byte counts
+
+`wc -c` and `check.lua` disagree by exactly the line count. `core.autocrlf` is
+`true`, so the working tree holds CRLF while Lua's text-mode read collapses it
+to LF. **`check.lua`'s number is the authoritative one** - it matches what the
+compiler sees. Do not budget against `wc -c`.
 
 Needs Lua 5.4 (`winget install DEVCOM.Lua`), installed to
 `%LOCALAPPDATA%\Programs\Lua\bin`. `check.ps1` locates it even when `lua` is
@@ -48,14 +80,14 @@ $env:Path += ";$env:LOCALAPPDATA\Programs\Lua\bin"
 
 ## Pushing to a badge
 
-Copy the app to the clipboard:
+Copy the built app to the clipboard (run `lua check.lua` first):
 
 ```powershell
-Get-Content -Raw apps\bump_pets.lua | Set-Clipboard
+Get-Content -Raw dist\bump_pets.lua | Set-Clipboard
 ```
 
 ```bash
-cat apps/bump_pets.lua | clip
+cat dist/bump_pets.lua | clip
 ```
 
 Or just open the file and Ctrl+A, Ctrl+C — that always works.
