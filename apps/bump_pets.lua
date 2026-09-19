@@ -67,6 +67,10 @@ local S = {
   -- ns strokes are painted, k of them per contact. cur is the contact the
   -- attribution cursor is on, 0 for none; nm is a ring of names.
   cur = 0, sel = 0, base = 0, poff = 0, nm = {},
+  -- nlo is the first stroke a newly met contact painted, 0 for none;
+  -- npul is the border width currently on them, so the pulse only
+  -- restyles on a change rather than every frame.
+  nlo = 0, npul = 0,
 }
 
 -- progress of the bounded work queue.  step 0 means ready.
@@ -596,6 +600,13 @@ local function step(now)
       end
       W.banner:hidden(false)
       S.celeb = now + 2600
+      -- The strokes the new contacts painted are the last ones, because the
+      -- painting follows the most recent contacts. Marking them says "these
+      -- are the person you just met", which is the same claim attribution
+      -- makes, at the moment it means most.
+      local lo = (S.seen - S.total + P.n // P.k) * P.k + 1
+      if lo < 1 then lo = 1 end
+      S.nlo = lo
     end
     if S.seen ~= S.total then
       S.seen = S.total
@@ -626,6 +637,17 @@ function on_tick()
   if S.celeb > 0 and now >= S.celeb then
     W.banner:hidden(true)
     S.celeb = 0
+  end
+  if S.nlo > 0 then
+    local on = 0
+    if S.celeb > now and now // 260 % 2 == 1 then on = 2 end
+    if on ~= S.npul then
+      S.npul = on
+      for i = S.nlo, P.n do
+        G[i]:style({border_color = 0xffffff, border_width = on})
+      end
+    end
+    if S.celeb == 0 then S.nlo = 0 end
   end
   draw(now)
   leds(now)
