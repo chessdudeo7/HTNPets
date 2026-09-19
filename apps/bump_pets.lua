@@ -28,7 +28,10 @@ wake_lock=1
 -- Built in separate statements on purpose: one big nested constructor makes
 -- the main chunk reserve a register per element, which pushed it to 26 slots
 -- and into stack-safety territory. Each statement below peaks on its own.
-local C = {SCAN = 200, MAXS = 120, BG = 0x0b0f14, TAU = 6.2831853}
+local C = {SCAN = 200, MAXS = 120, BG = 0x0b0f14}
+-- Bumps that unlock the starfield leds. SET THIS TO 25 FOR THE EVENT; it is
+-- low now so the effect can be tested without first meeting 25 people.
+C.STAR = 5
 C.CW = {1, 2, 3, 4, 5, 6}
 C.AT = {1, 2, 3, 5, 7, 10, 14, 19, 25, 32, 40, 50}
 -- name, ear w, ear h, ear radius, ear spread, tail -- all as 34ths of the
@@ -49,7 +52,7 @@ C.PAL = {0x0c1246, 0x24253a, 0x3a589f, 0x282738, 0x7b899c, 0x153a3d,
 C.ART = "ABCDEFGABABCFGABHFHIGADCFJIHAKGDGFGABKDCFGABKFJILFBHDEFLIBADCFGIBJBCDKFHLDJICFKADJFJIGABCLHIGABJDCFGABEFCIGABCFJIHABCDHF"
 
 local S = {
-  total = 0, roles = 0, stage = 0, fold = 0,
+  total = 0, stage = 0, fold = 0,
   newest = "", petname = "PET", species = 1,
   pr = 255, pg = 190, pb = 90,
   nextf = 0, celeb = 0, blink = false,
@@ -65,11 +68,10 @@ local S = {
 }
 
 -- progress of the bounded work queue.  step 0 means ready.
-local P = {step = 1, i = 1, fold = 7, hits = {}, made = false}
+local P = {step = 1, i = 1, fold = 7, made = false}
 
 local W = {}   -- named widgets
 local G = {}   -- brush strokes, back to front
-local R = {}   -- ring of contact hashes
 local L = {}   -- precomputed layout, so draw() only adds the bob
 
 -- Size and colour one box. Nineteen copies of these three lines was the
@@ -126,11 +128,6 @@ local function scan_one()
   local c = badge.contacts.get(P.i)
   if not c then return false end
   S.total = P.i
-  local k = tostring(c.role)
-  if P.hits[k] == nil then
-    S.roles = S.roles + 1
-    P.hits[k] = true
-  end
   local id = c.badge_id
   if type(id) ~= "string" then id = tostring(id) end
   local ln = #id
@@ -153,7 +150,6 @@ local function scan_one()
   h = (h * 33 + (g or 24)) % 16777213
   P.fold = (P.fold * 33 + h) % 16777213
   local slot = (P.i - 1) % 16 + 1
-  R[slot] = h
   local nm = "?"
   if type(c.name) == "string" then
     nm = string.sub(c.name, 1, 16)
@@ -446,6 +442,18 @@ local function leds(now)
     for i = 1, 6 do
       badge.led.set(C.CW[i], q, dim(180, q), dim(70, q))
     end
+  elseif S.total >= C.STAR then
+    -- Starfield, to match the sky the contacts are painting. Each led runs
+    -- its own period and offset so they never pulse together the way one
+    -- shared breath does, and the square makes the brightening sharp rather
+    -- than a slow fade, which is what reads as a twinkle. The offsets are
+    -- squared because evenly spaced ones make the six ramp in order, which
+    -- reads as a wave travelling round the badge instead of as stars.
+    for i = 1, 6 do
+      local b = breath(now + i * i * 631 % 2600, 1500 + i * 230)
+      local q = lv * (10 + b * b // 125) // 100
+      badge.led.set(C.CW[i], dim(190, q), dim(215, q), q)
+    end
   else
     -- Coat 20..45%, with one travelling highlight at full brightness. Below
     -- about 20% the coat reads as black and only the highlight is visible.
@@ -601,8 +609,8 @@ function on_button(button, kind)
   if P.step > 0 then return end
   local B = badge.input.BUTTON
   if button == B.A then
-    P.i, P.fold, P.hits = 1, 7, {}
-    S.total, S.roles, S.cur = 0, 0, 0
+    P.i, P.fold = 1, 7
+    S.total, S.cur = 0, 0
     P.step = 3
     return
   elseif button == B.LEFT then
