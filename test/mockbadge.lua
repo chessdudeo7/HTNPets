@@ -92,6 +92,24 @@ end
 
 local store, now = {}, 0
 local logs = {}
+local leds, lit, shows = {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, 0
+
+-- Total light currently latched on the strip. 0 means dark.
+local function led_total()
+  local t = 0
+  for i = 1, 6 do t = t + (lit[i] or 0) end
+  return t
+end
+
+-- Brightest single led seen across the whole run, as r+g+b. A state can be
+-- logically "on" and still look off: the firmware applies a brightness curve
+-- that flattens small values, so a few percent of full is not a visible led.
+local peak = 0
+local function note_peak()
+  for i = 1, 6 do
+    if (lit[i] or 0) > peak then peak = lit[i] end
+  end
+end
 
 badge = {
   ui = {
@@ -109,10 +127,17 @@ badge = {
     line = function() return new_widget("line") end,
     arc = function() return new_widget("arc") end,
   },
+  -- The strip is modelled, not just validated: "the lights will not come back
+  -- on" is a state bug, and a mock that discards every value cannot see one.
+  -- leds holds the staged frame; lit holds what the last show() latched.
   led = {
     count = function() return 6 end,
-    clear = function() end,
-    show = function() end,
+    clear = function() for i = 1, 6 do leds[i] = 0 end end,
+    show = function()
+      for i = 1, 6 do lit[i] = leds[i] end
+      shows = shows + 1
+      note_peak()
+    end,
     set = function(i, r, g, b)
       int(i, "led index"); check(i >= 1 and i <= 6, "led index range: " .. i)
       for _, c in ipairs({{r, "r"}, {g, "g"}, {b, "b"}}) do
@@ -120,6 +145,7 @@ badge = {
         check(c[1] >= 0 and c[1] <= 255,
               "led " .. c[2] .. " out of range: " .. tostring(c[1]))
       end
+      leds[i] = r + g + b
     end,
   },
   contacts = {
@@ -209,13 +235,37 @@ check(built > 5, "app never finished loading: only " .. built .. " widgets")
 -- through every segment and back to "none" in both directions.
 -- The trailing RIGHTs leave a segment picked, so a preview run shows what
 -- attribution actually says rather than the default summary line.
-for _, b in ipairs({1, 2, 7, 4, 6, 6, 6, 6, 5, 5, 5, 5, 1, 9, 6, 6}) do
+-- B is deliberately absent here: it is a toggle, and the dedicated test below
+-- needs to start from a known lights-on state.
+for _, b in ipairs({1, 7, 4, 6, 6, 6, 6, 5, 5, 5, 5, 1, 9, 6, 6}) do
   local o, e = pcall(on_button, b, 1)
   check(o, "on_button(" .. b .. ") errored: " .. tostring(e))
   if not ticks(80) then break end
 end
 check(widgets == built,
       "rescan leaked widgets: " .. built .. " -> " .. widgets)
+
+-- B is a toggle, so it has to survive being pressed twice. Nothing else here
+-- presses a button more than once, which is how an off-and-stays-off bug
+-- reaches a badge through a green gate.
+do
+  local before = led_total()
+  check(before > 0, "leds were already dark before the B toggle test")
+  pcall(on_button, 2, 1); ticks(4)
+  check(led_total() == 0,
+        "B did not turn the leds off: total " .. led_total())
+  pcall(on_button, 2, 1); ticks(4)
+  check(led_total() > 0,
+        "B did not turn the leds back on: they stayed dark")
+end
+
+-- At default brightness some led must actually reach a visible level at some
+-- point. 200 of a possible 765 is roughly one led at a third of full. This is
+-- the check that would have caught the egg lighting two leds at 10-33%.
+check(peak >= 200,
+      "no led ever got bright enough to read: peak r+g+b was " .. peak
+      .. ", floor is 200. A state that is logically on but this dim looks off "
+      .. "on the badge.")
 
 local o, e = pcall(on_exit)
 check(o, "on_exit errored: " .. tostring(e))

@@ -319,11 +319,17 @@ local function leds(now)
       badge.led.set(C.CW[i], dim(r, q), dim(g, q), dim(b, q))
     end
   elseif S.egg then
-    local q = lv * (1500 + 35 * breath(now, 3000)) // 10000
-    badge.led.set(1, q, dim(180, q), dim(70, q))
-    badge.led.set(2, q, dim(180, q), dim(70, q))
+    -- The egg is the front door: every badge starts here, and it is the
+    -- "come bump me" signal.  All six, breathing 35..100% of brightness.
+    -- Two leds at 15..50% read as off once the firmware curve is applied.
+    local q = lv * (3500 + 65 * breath(now, 3000)) // 10000
+    for i = 1, 6 do
+      badge.led.set(C.CW[i], q, dim(180, q), dim(70, q))
+    end
   else
-    local q = lv * (1000 + 20 * breath(now, 2600)) // 10000
+    -- Body 20..45%, with one travelling highlight at full brightness. Below
+    -- about 20% the body reads as black and only the highlight is visible.
+    local q = lv * (2000 + 25 * breath(now, 2600)) // 10000
     for i = 1, 6 do
       badge.led.set(C.CW[i], dim(S.pr, q), dim(S.pg, q), dim(S.pb, q))
     end
