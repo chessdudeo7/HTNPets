@@ -195,6 +195,25 @@ for _, n in ipairs({0, 12, 200}) do
   end
 end
 
+-- A badge with contacts must never show an empty sky. This invariant broke
+-- once: the heap budget had no floor, so on a badge reporting less free
+-- memory than the app reserved, the cap went to zero and the painting
+-- disappeared while the creature stayed.
+for _, m in ipairs({"", " lowheap", " starved"}) do
+  local out = sh(q(LUA) .. " test/mockbadge.lua " .. q(MOCK_APP) .. " 9 hatched"
+                 .. m)
+  local w = tonumber(out and out:match("widgets%s+(%d+)") or "0")
+  local name = m == "" and "normal" or m:gsub(" ", "")
+  if out and out:find("RESULT    pass") and w > 30 then
+    print(string.format("  %-8s 9 contacts  pass  (%d widgets, %d strokes)",
+                        name, w, w - 28))
+  else
+    print(string.format("  %-8s 9 contacts  FAIL  (%d widgets) - a badge with "
+                        .. "contacts painted nothing", name, w))
+    status = 1
+  end
+end
+
 -- Variants ship, so they are gated too. A patch that stops matching is caught
 -- by build.lua; this catches one that matches but breaks the app.
 do
