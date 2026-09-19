@@ -71,6 +71,8 @@ end
 function Widget:align(a, x, y)
   check(type(a) == "string", "align name")
   int(x, "align dx"); int(y, "align dy")
+  -- Kept so the renderer can place labels, which never get set_pos.
+  self.al, self.adx, self.ady = a, x, y
 end
 function Widget:set_text(t)
   check(type(t) == "string", "set_text needs string")
@@ -88,6 +90,13 @@ function Widget:style(t, sel)
     end
   end
   if sel then check(type(sel) == "string", "style selector") end
+  -- Remember the style. Validating and discarding means no tool downstream
+  -- can draw what the app actually looks like, which is how a design gets
+  -- iterated blind.
+  if not sel then
+    self.st = self.st or {}
+    for k, v in pairs(t) do self.st[k] = v end
+  end
 end
 
 local store, now = {}, 0
