@@ -99,6 +99,8 @@ function Widget:style(t, sel)
   end
 end
 
+local lowheap = false   -- set from argv below; declared here so that
+                        -- badge.sys.stats closes over the local
 local store, now = {}, 0
 local logs = {}
 local leds, lit, shows = {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, 0
@@ -184,7 +186,8 @@ badge = {
     random = function(n) return n and math.random(0, n - 1) or math.random(0, 2^31) end,
     stats = function()
       return {lua_used = 30000, lua_limit = 98304, lua_peak = 31000,
-              widgets = widgets, uptime_ms = now, free_heap = 40000}
+              widgets = widgets, uptime_ms = now,
+              free_heap = lowheap and 18000 or 40000}
     end,
     version = function() return "mock" end,
   },
@@ -215,8 +218,11 @@ assert(on_enter, "app defines no on_enter")
 -- empty store, the app arms the egg at the current contact count, and the
 -- whole creature path goes untested.
 local hatched = false
-for i = 1, 4 do
+for i = 1, 5 do
   if arg[i] == "hatched" then hatched = true end
+  -- An app that sizes itself to free_heap needs its low-memory path walked,
+  -- or the degraded case only ever runs on someone else's badge.
+  if arg[i] == "lowheap" then lowheap = true end
 end
 if hatched then store.hatch = 0 end
 

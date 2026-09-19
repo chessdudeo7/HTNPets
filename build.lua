@@ -32,12 +32,12 @@ local VARIANTS = {
       {
         -- Skip arming the egg. S.hatch stays -1 and is never consulted, so
         -- the creature is drawn from whatever contacts already exist.
-        from = "  if S.hatch < 0 then\n"
-            .. "    S.hatch = S.total\n"
-            .. "    S.dirty = true\n"
-            .. "  end\n"
-            .. "  S.egg = S.total <= S.hatch\n",
-        to = "  S.egg = false\n",
+        from = "      if S.hatch < 0 then\n"
+            .. "        S.hatch = S.total\n"
+            .. "        S.dirty = true\n"
+            .. "      end\n"
+            .. "      S.egg = S.total <= S.hatch\n",
+        to = "      S.egg = false\n",
       },
     },
   },

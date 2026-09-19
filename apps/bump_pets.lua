@@ -52,7 +52,7 @@ C.PAL = {0x0c1246, 0x24253a, 0x3a589f, 0x282738, 0x7b899c, 0x153a3d,
 C.ART = "ABCDEFGABABCFGABHFHIGADCFJIHAKGDGFGABKDCFGABKFJILFBHDEFLIBADCFGIBJBCDKFHLDJICFKADJFJIGABCLHIGABJDCFGABEFCIGABCFJIHABCDHF"
 
 local S = {
-  total = 0, stage = 0, fold = 0,
+  total = 0, stage = 0,
   newest = "", petname = "PET", species = 1,
   pr = 255, pg = 190, pb = 90,
   nextf = 0, celeb = 0, blink = false,
@@ -64,11 +64,11 @@ local S = {
   hatch = -1, egg = true,
   -- ns strokes are painted, k of them per contact. cur is the contact the
   -- attribution cursor is on, 0 for none; nm is a ring of names.
-  ns = 0, k = 4, cur = 0, sel = 0, base = 0, poff = 0, nm = {},
+  cur = 0, sel = 0, base = 0, poff = 0, nm = {},
 }
 
 -- progress of the bounded work queue.  step 0 means ready.
-local P = {step = 1, i = 1, fold = 7, made = false}
+local P = {step = 1, i = 1, fold = 7, n = 0, k = 1, made = false}
 
 local W = {}   -- named widgets
 local G = {}   -- brush strokes, back to front
@@ -163,29 +163,12 @@ end
 -- Sizes and base positions, computed once per rebuild so that draw() only
 -- has to add the bob offset.
 local function meta()
-  S.fold = P.fold
   S.stage = stage_of(S.total)
-  -- Arm the egg at whatever count this badge already has, once, on the first
-  -- open. A badge with forty contacts still gets to watch it hatch.
-  if S.hatch < 0 then
-    S.hatch = S.total
-    S.dirty = true
-  end
-  S.egg = S.total <= S.hatch
-
-  -- Strokes per contact falls as the book grows, so the widget count stays
-  -- bounded while the painting keeps filling in. A contact still owns a whole
-  -- run of strokes, which is what attribution points at.
-  local t = S.total
-  if t < 1 then t = 1 end
-  local k = C.MAXS // t
-  if k > 4 then k = 4 end
-  if k < 1 then k = 1 end
-  S.k = k
-  local n = S.total * k
-  if n > C.MAXS then n = C.MAXS end
-  if S.egg then n = 0 end
-  S.ns = n
+  -- The stroke budget was decided when the scan finished, before any widget
+  -- was made. Four per contact until the heap runs out, then it plateaus:
+  -- below the cap every new friend adds four strokes, above it the painting
+  -- is full and growth shows in the animal, the counter and the banner.
+  local k, n = P.k, P.n
   -- Past C.MAXS strokes the painting covers the most RECENT contacts, not
   -- the first: the name ring holds the last 16, so painting from the front
   -- would name a different person from the one the strokes belong to.
@@ -201,7 +184,7 @@ local function meta()
   -- else, and the backdrops are cool, so the animal has to stay on the other
   -- side of the wheel to read as an animal rather than a smudge.
   S.pr, S.pg, S.pb = 255, 190, 90
-  if S.total > 0 then S.pr, S.pg, S.pb = hue(S.fold % 46 + 12) end
+  if S.total > 0 then S.pr, S.pg, S.pb = hue(P.fold % 46 + 12) end
 
   local hd = 64 + S.stage * 2          -- head width drives everything
   local hh = hd * 7 // 8
@@ -263,7 +246,7 @@ end
 -- Colours are baked per stroke index by tools/artgen.py.
 local function paint(lo, hi)
   for i = lo, hi do
-    if i <= S.ns then
+    if i <= P.n then
       local h = (i * 2654435761) % 4294967296
       local d = L.sd * (78 + (h // 524288) % 45) // 100
       local x = math.floor(((0.5 + 0.7548776662 * i) % 1) * 320) + (h // 8) % 9 - 4
@@ -277,7 +260,7 @@ local function paint(lo, hi)
                   bg_color = C.PAL[string.byte(C.ART, i) - 64] or C.BG})
       G[i]:set_pos(x, y)
       G[i]:hidden(false)
-    else
+    elseif G[i] then
       G[i]:hidden(true)
     end
   end
@@ -332,7 +315,7 @@ local function stat_line()
     local idx = S.base + S.cur
     return "#" .. idx .. "  " .. (S.nm[(idx - 1) % 16 + 1] or "?")
   end
-  return S.total .. " friends    " .. S.ns .. " strokes"
+  return S.total .. " friends    " .. P.n .. " strokes"
 end
 
 local function finish()
@@ -367,8 +350,8 @@ local function pick(d)
   for j = 1, 2 do
     local w = j == 1 and old or c
     if w > 0 and w <= S.sel then
-      for i = (S.poff + w - 1) * S.k + 1, (S.poff + w) * S.k do
-        if i <= S.ns then
+      for i = (S.poff + w - 1) * P.k + 1, (S.poff + w) * P.k do
+        if i <= P.n then
           G[i]:style({border_color = 0xffffff, border_width = j == 1 and 0 or 2})
         end
       end
@@ -500,15 +483,41 @@ local function step(now)
     P.step = 3
   elseif s == 3 then
     if P.i > C.SCAN or not scan_one() then
+      -- Contacts cannot change while this app is in the foreground, because
+      -- bumping means leaving it. So the stroke count is known now, and the
+      -- widgets can be sized to it rather than always allocating C.MAXS and
+      -- hiding the difference. Hiding a widget does not free it.
+      if S.hatch < 0 then
+        S.hatch = S.total
+        S.dirty = true
+      end
+      S.egg = S.total <= S.hatch
+      -- Paint what the heap can afford, not a fixed number. Each widget
+      -- costs about 112 bytes of system heap, and a badge with other apps
+      -- on it has less than this one -- which is every badge this app gets
+      -- shared to. A count tuned here would fail there.
+      local cap = (badge.sys.stats().free_heap - 14000) // 112
+      if cap > C.MAXS then cap = C.MAXS end
+      if cap < 0 then cap = 0 end
+      local n = S.total * 4
+      if n > cap then n = cap end
+      if S.egg then n = 0 end
+      P.n = n
+      local k = 1
+      if S.total > 0 then k = n // S.total end
+      if k < 1 then k = 1 end
+      P.k = k
       if P.made then P.step = 40 else P.step = 4 end
     end
   elseif s >= 4 and s <= 18 then
     local base = (s - 4) * 8
     for i = base + 1, base + 8 do
-      G[i] = badge.ui.box(W.bg, 8, 8)
-      G[i]:hidden(true)
+      if i <= P.n then
+        G[i] = badge.ui.box(W.bg, 8, 8)
+        G[i]:hidden(true)
+      end
     end
-    P.step = s + 1
+    if base + 8 >= P.n then P.step = 19 else P.step = s + 1 end
   elseif s >= 19 and s <= 23 then
     local base = (s - 19) * 4
     for i = base + 1, base + 4 do
