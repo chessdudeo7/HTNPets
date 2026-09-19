@@ -8,8 +8,8 @@ wake_lock=1
 ]==]
 
 -- Bump Pets -- your pet is made of the people you have met.
--- Every Connect contact adds a body segment coloured from their badge id.
--- A rescan   B lights   Up/Dn brightness   HOME exit
+-- Each Connect contact adds a coloured spot; your badge id picks the species
+-- and the coat colour.  A rescan  B lights  Up/Dn brightness  HOME exit
 --
 -- READ BEFORE EDITING.  This badge raises "Lua stack safety limit reached"
 -- when one callback does too much.  The vendor guide's remedy for that exact
@@ -23,21 +23,29 @@ wake_lock=1
 -- main-chunk slot and an upvalue in every function that reads it.
 -- Verify with:  .\check.ps1
 
-local C = {
-  SCAN = 200,
-  SEG = 12,
-  BG = 0x0b0f14,
-  TAU = 6.2831853,
-  CW = {1, 2, 3, 4, 5, 6},
-  AT = {1, 2, 3, 5, 7, 10, 14, 19, 25, 32, 40, 50},
-}
+-- Built in separate statements on purpose: one big nested constructor makes
+-- the main chunk reserve a register per element, which pushed it to 26 slots
+-- and into stack-safety territory. Each statement below peaks on its own.
+local C = {SCAN = 200, SPOT = 8, BG = 0x0b0f14, TAU = 6.2831853}
+C.CW = {1, 2, 3, 4, 5, 6}
+C.AT = {1, 2, 3, 5, 7, 10, 14, 19, 25, 32, 40, 50}
+-- spot placement as thousandths of body width / height
+C.SX = {-230, 190, 20, -150, 265, -280, 110, -40}
+C.SY = {-110, -180, 150, 205, 60, 85, -20, -240}
+-- name, ear w, ear h, ear radius, ear spread, tail size
+C.SP = {}
+C.SP[1] = {"Bun",  11, 30,  5, 26,  9}
+C.SP[2] = {"Cat",  17, 17,  4, 31,  7}
+C.SP[3] = {"Bear", 19, 19, 10, 34,  6}
+C.SP[4] = {"Fox",  19, 24,  4, 35, 13}
+C.PARTS = {"body", "belly", "head", "earL", "earR", "eyeL"}
+C.PART2 = {"eyeR", "nose", "tail", "footL", "footR"}
 
 local S = {
-  total = 0, roles = 0, stage = 0, segn = 0, fold = 0,
-  newest = "", petname = "PET",
+  total = 0, roles = 0, stage = 0, spots = 0, fold = 0,
+  newest = "", petname = "PET", species = 1,
   pr = 255, pg = 190, pb = 90,
-  phase = 0, amp = 10, gap = 20,
-  nextf = 0, celeb = 0,
+  phase = 0, nextf = 0, celeb = 0, blink = false,
   led = true, lv = 170,
   seen = -1, dirty = false,
 }
@@ -46,9 +54,9 @@ local S = {
 local P = {step = 1, i = 1, fold = 7, hits = {}, made = false}
 
 local W = {}   -- named widgets
-local G = {}   -- body segment widgets
+local G = {}   -- spot widgets
 local R = {}   -- ring of contact hashes
-local D = {}   -- segment diameters
+local L = {}   -- precomputed base layout, so draw() only adds the bob
 
 local function hue(x)
   x = x % 360
@@ -64,6 +72,10 @@ local function hue(x)
 end
 
 local function hex(r, g, b) return r * 65536 + g * 256 + b end
+
+local function pastel(r, g, b)
+  return hex((r + 510) // 3, (g + 510) // 3, (b + 510) // 3)
+end
 
 local function dim(c, lv)
   local v = c * lv // 255
@@ -85,10 +97,6 @@ local function stage_of(n)
     if n >= C.AT[i] then s = i else break end
   end
   return s
-end
-
-local function seg_hash(j)
-  return R[(S.total - S.segn + j - 1) % C.SEG + 1] or 0
 end
 
 -- ONE contact per call. Bytes in bulk, never string.byte in a loop.
@@ -136,42 +144,111 @@ local function scan_one()
   h = (h * 33 + (f or 23)) % 16777213
   h = (h * 33 + (g or 24)) % 16777213
   P.fold = (P.fold * 33 + h) % 16777213
-  R[(P.i - 1) % C.SEG + 1] = h
+  R[(P.i - 1) % C.SPOT + 1] = h
   if type(c.name) == "string" then S.newest = c.name end
   P.i = P.i + 1
   return true
 end
 
+-- Sizes and base positions, computed once per rebuild so that draw() only
+-- has to add the bob offset.
 local function meta()
   S.fold = P.fold
   S.stage = stage_of(S.total)
   local n = S.total
-  if n > C.SEG then n = C.SEG end
-  S.segn = n
-  if n > 0 then
+  if n > C.SPOT then n = C.SPOT end
+  S.spots = n
+
+  if S.total > 0 then
     S.pr, S.pg, S.pb = hue(S.fold % 360)
+    S.species = S.fold % 4 + 1
   else
     S.pr, S.pg, S.pb = 255, 190, 90
+    S.species = 1
   end
-  local gp = 24
-  if n > 0 then gp = 200 // n end
-  if gp > 24 then gp = 24 end
-  if gp < 12 then gp = 12 end
-  S.gap = gp
-  local a = 8 + S.stage
-  if a > 16 then a = 16 end
-  S.amp = a
+
+  local hd = 30 + S.stage * 3          -- head diameter
+  local bw = hd + 16                   -- body width
+  local bh = hd + 4                    -- body height
+  L.hd, L.bw, L.bh = hd, bw, bh
+
+  local cy = 150 - bh // 2             -- body centre, feet sit near y=150
+  L.bx = 160 - bw // 2
+  L.by = cy - bh // 2
+  L.hx = 160 - hd // 2
+  L.hy = L.by - hd + hd // 4           -- head overlaps the body a little
+
+  local sp = C.SP[S.species]
+  L.ew, L.eh, L.er = sp[2], sp[3], sp[4]
+  local spread = sp[5] * hd // 100
+  L.elx = 160 - spread - L.ew // 2
+  L.erx = 160 + spread - L.ew // 2
+  L.ey = L.hy - L.eh + L.eh // 3
+
+  L.ed = 6 + S.stage // 3              -- eye diameter
+  L.elex = 160 - hd // 4 - L.ed // 2
+  L.erex = 160 + hd // 4 - L.ed // 2
+  L.eyy = L.hy + hd // 2 - L.ed // 2
+  L.nw = 5 + S.stage // 4
+  L.nx = 160 - L.nw // 2
+  L.ny = L.eyy + L.ed + 2
+
+  L.td = sp[6] * hd // 34
+  L.tx = 160 + bw // 2 - L.td // 3
+  L.ty = cy - L.td // 2
+  L.fd = 10 + S.stage // 2
+  L.flx = 160 - bw // 4 - L.fd // 2
+  L.frx = 160 + bw // 4 - L.fd // 2
+  L.fy = cy + bh // 2 - L.fd // 2
+  L.blx = 160 - bw // 4
+  L.bly = cy + bh // 6
+  L.blw, L.blh = bw // 2, bh // 2
 end
 
--- style segments lo..hi, at most four per call
-local function style_seg(lo, hi)
+-- One function, three branches: three separate locals would each cost a
+-- main-chunk slot, and the main chunk is the tightest budget in the file.
+local function dress(part)
+  local body = hex(S.pr, S.pg, S.pb)
+  local soft = pastel(S.pr, S.pg, S.pb)
+  if part == 1 then
+    W.body:set_size(L.bw, L.bh)
+    W.body:style({bg_color = body, radius = L.bh // 2, border_width = 0})
+    W.belly:set_size(L.blw, L.blh)
+    W.belly:style({bg_color = soft, radius = L.blh // 2, border_width = 0})
+    W.head:set_size(L.hd, L.hd)
+    W.head:style({bg_color = body, radius = L.hd // 2, border_width = 0})
+    W.tail:set_size(L.td, L.td)
+    W.tail:style({bg_color = body, radius = L.td // 2, border_width = 0})
+  elseif part == 2 then
+    W.earL:set_size(L.ew, L.eh)
+    W.earL:style({bg_color = body, radius = L.er, border_width = 0})
+    W.earR:set_size(L.ew, L.eh)
+    W.earR:style({bg_color = body, radius = L.er, border_width = 0})
+    W.eyeL:set_size(L.ed, L.ed)
+    W.eyeL:style({bg_color = 0x14141c, radius = L.ed // 2, border_width = 0})
+    W.eyeR:set_size(L.ed, L.ed)
+    W.eyeR:style({bg_color = 0x14141c, radius = L.ed // 2, border_width = 0})
+  else
+    W.nose:set_size(L.nw, L.nw)
+    W.nose:style({bg_color = 0xff9aab, radius = L.nw // 2, border_width = 0})
+    W.footL:set_size(L.fd, L.fd)
+    W.footL:style({bg_color = soft, radius = L.fd // 2, border_width = 0})
+    W.footR:set_size(L.fd, L.fd)
+    W.footR:style({bg_color = soft, radius = L.fd // 2, border_width = 0})
+  end
+end
+
+-- style spots lo..hi, at most four per call
+local function style_spot(lo, hi)
+  local d = 7 + S.stage // 3
   for i = lo, hi do
-    if i <= S.segn then
-      local d = 12 + 14 * i // S.segn
-      D[i] = d
+    if i <= S.spots then
+      local h = R[(S.total - S.spots + i - 1) % C.SPOT + 1] or 0
       G[i]:set_size(d, d)
       G[i]:style({radius = d // 2, border_width = 0,
-                  bg_color = hex(hue(seg_hash(i) % 360))})
+                  bg_color = hex(hue(h % 360))})
+      G[i]:set_pos(160 + C.SX[i] * L.bw // 1000 - d // 2,
+                   L.by + L.bh // 2 + C.SY[i] * L.bh // 1000 - d // 2)
       G[i]:hidden(false)
     else
       G[i]:hidden(true)
@@ -180,17 +257,17 @@ local function style_seg(lo, hi)
 end
 
 local function finish()
-  W.egg:hidden(S.stage > 0)
-  W.head:hidden(S.stage == 0)
-  W.e1:hidden(S.stage == 0)
-  W.e2:hidden(S.stage == 0)
-  W.head:style({bg_color = hex(S.pr, S.pg, S.pb), radius = 17,
-                border_width = 0})
-  W.title:set_text(S.petname .. "  -  stage " .. S.stage)
-  if S.stage > 0 then
-    W.stat:set_text("friends " .. S.total .. "    roles " .. S.roles)
-  else
+  local egg = S.stage == 0
+  W.egg:hidden(not egg)
+  for i = 1, #C.PARTS do W[C.PARTS[i]]:hidden(egg) end
+  for i = 1, #C.PART2 do W[C.PART2[i]]:hidden(egg) end
+  W.title:set_text(S.petname .. "  the  " .. C.SP[S.species][1])
+  if egg then
+    W.title:set_text(S.petname)
     W.stat:set_text("Open Connect and bump a badge to hatch")
+  else
+    W.stat:set_text("friends " .. S.total .. "    roles " .. S.roles ..
+                    "    stage " .. S.stage)
   end
   local lo = C.AT[S.stage] or 0
   local hi = C.AT[S.stage + 1]
@@ -201,40 +278,36 @@ local function finish()
   W.prog:set_value(p)
 end
 
-local function celebrate(now)
-  if S.seen >= 0 and S.total > S.seen then
-    if S.stage > stage_of(S.seen) then
-      W.banner:set_text("EVOLVED   stage " .. S.stage)
-    else
-      W.banner:set_text("NEW FRIEND   " .. string.sub(S.newest, 1, 14))
-    end
-    W.banner:hidden(false)
-    S.celeb = now + 2600
-  end
-  if S.seen ~= S.total then
-    S.seen = S.total
-    S.dirty = true
-  end
-end
-
 local function draw(now)
   if S.stage == 0 then
     W.egg:set_pos(126, 52 + 6 * breath(now, 2600) // 100)
     return
   end
-  local n = S.segn
-  local gp = S.gap
-  local x0 = 160 - (n * gp + 34) // 2
-  for i = 1, n do
-    local d = D[i]
-    local y = 96 + math.floor(S.amp * math.sin(S.phase + i * 0.55))
-    G[i]:set_pos(x0 + (i - 1) * gp + 10 - d // 2, y - d // 2)
+  -- gentle bob; ears and head lag by half a beat so it reads as breathing
+  local b = breath(now, 2400)
+  local dy = (b - 50) * 5 // 100
+  local hdy = (breath(now + 300, 2400) - 50) * 6 // 100
+
+  W.body:set_pos(L.bx, L.by + dy)
+  W.belly:set_pos(L.blx, L.bly + dy)
+  W.head:set_pos(L.hx, L.hy + hdy)
+  W.earL:set_pos(L.elx, L.ey + hdy)
+  W.earR:set_pos(L.erx, L.ey + hdy)
+  W.eyeL:set_pos(L.elex, L.eyy + hdy)
+  W.eyeR:set_pos(L.erex, L.eyy + hdy)
+  W.nose:set_pos(L.nx, L.ny + hdy)
+  W.tail:set_pos(L.tx, L.ty + dy)
+  W.footL:set_pos(L.flx, L.fy)
+  W.footR:set_pos(L.frx, L.fy)
+
+  local shut = (now % 3600) < 130
+  if shut ~= S.blink then
+    S.blink = shut
+    local h = L.ed
+    if shut then h = 2 end
+    W.eyeL:set_size(L.ed, h)
+    W.eyeR:set_size(L.ed, h)
   end
-  local hy = 96 + math.floor(S.amp * math.sin(S.phase + (n + 1) * 0.55))
-  local hx = x0 + n * gp + 14
-  W.head:set_pos(hx - 17, hy - 17)
-  W.e1:set_pos(hx - 3, hy - 8)
-  W.e2:set_pos(hx + 7, hy - 8)
 end
 
 local function leds(now)
@@ -257,7 +330,7 @@ local function leds(now)
     badge.led.set(1, q, dim(180, q), dim(70, q))
     badge.led.set(2, q, dim(180, q), dim(70, q))
   else
-    local q = lv * (1000 + 20 * breath(now, 2600)) // 10000
+    local q = lv * (1000 + 20 * breath(now, 2400)) // 10000
     for i = 1, 6 do
       badge.led.set(C.CW[i], dim(S.pr, q), dim(S.pg, q), dim(S.pb, q))
     end
@@ -294,31 +367,39 @@ local function step(now)
     W.egg = badge.ui.box(W.bg, 68, 86)
     W.egg:style({bg_color = 0xf0e6d2, radius = 34, border_width = 0})
     P.step = 5
-  elseif s >= 5 and s <= 7 then
-    local base = (s - 5) * 4
+  elseif s == 5 then
+    W.body = badge.ui.box(W.bg, 20, 20)
+    W.belly = badge.ui.box(W.bg, 10, 10)
+    W.tail = badge.ui.box(W.bg, 8, 8)
+    W.head = badge.ui.box(W.bg, 20, 20)
+    P.step = 6
+  elseif s == 6 then
+    W.earL = badge.ui.box(W.bg, 8, 8)
+    W.earR = badge.ui.box(W.bg, 8, 8)
+    W.eyeL = badge.ui.box(W.bg, 6, 6)
+    W.eyeR = badge.ui.box(W.bg, 6, 6)
+    P.step = 7
+  elseif s == 7 then
+    W.nose = badge.ui.box(W.bg, 5, 5)
+    W.footL = badge.ui.box(W.bg, 8, 8)
+    W.footR = badge.ui.box(W.bg, 8, 8)
+    W.stat = badge.ui.label(W.bg, "")
+    P.step = 8
+  elseif s == 8 or s == 9 then
+    local base = (s - 8) * 4
     for i = base + 1, base + 4 do
-      G[i] = badge.ui.box(W.bg, 20, 20)
+      G[i] = badge.ui.box(W.bg, 6, 6)
       G[i]:hidden(true)
     end
     P.step = s + 1
-  elseif s == 8 then
-    W.head = badge.ui.box(W.bg, 34, 34)
-    W.e1 = badge.ui.box(W.bg, 6, 6)
-    W.e2 = badge.ui.box(W.bg, 6, 6)
-    P.step = 9
-  elseif s == 9 then
-    W.e1:style({bg_color = C.BG, radius = 3, border_width = 0})
-    W.e2:style({bg_color = C.BG, radius = 3, border_width = 0})
-    W.stat = badge.ui.label(W.bg, "")
-    W.stat:style({text_font = 16, text_color = 0xc8d6e2})
-    P.step = 10
   elseif s == 10 then
+    W.stat:style({text_font = 16, text_color = 0xc8d6e2})
     W.stat:align("top_mid", 0, 168)
     W.prog = badge.ui.bar(W.bg, 0, 100, 0)
     W.prog:set_size(236, 8)
-    W.prog:set_pos(42, 196)
     P.step = 11
   elseif s == 11 then
+    W.prog:set_pos(42, 196)
     W.prog:style({bg_color = 0x1d2733, radius = 4})
     W.banner = badge.ui.label(W.bg, "")
     W.banner:style({text_font = 18, text_color = 0xffd45e})
@@ -338,13 +419,28 @@ local function step(now)
     meta()
     P.step = 21
   elseif s >= 21 and s <= 23 then
-    style_seg((s - 21) * 4 + 1, (s - 21) * 4 + 4)
+    dress(s - 20)
     P.step = s + 1
-  elseif s == 24 then
+  elseif s == 24 or s == 25 then
+    style_spot((s - 24) * 4 + 1, (s - 24) * 4 + 4)
+    P.step = s + 1
+  elseif s == 26 then
     finish()
-    P.step = 25
+    P.step = 27
   else
-    celebrate(now)
+    if S.seen >= 0 and S.total > S.seen then
+      if S.stage > stage_of(S.seen) then
+        W.banner:set_text("EVOLVED   stage " .. S.stage)
+      else
+        W.banner:set_text("NEW FRIEND   " .. string.sub(S.newest, 1, 14))
+      end
+      W.banner:hidden(false)
+      S.celeb = now + 2600
+    end
+    if S.seen ~= S.total then
+      S.seen = S.total
+      S.dirty = true
+    end
     S.nextf = now
     P.step = 0
   end
@@ -371,8 +467,6 @@ function on_tick()
     W.banner:hidden(true)
     S.celeb = 0
   end
-  S.phase = S.phase + 0.10
-  if S.phase > C.TAU then S.phase = S.phase - C.TAU end
   draw(now)
   leds(now)
 end
