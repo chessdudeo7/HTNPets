@@ -72,7 +72,10 @@ function Widget:align(a, x, y)
   check(type(a) == "string", "align name")
   int(x, "align dx"); int(y, "align dy")
 end
-function Widget:set_text(t) check(type(t) == "string", "set_text needs string") end
+function Widget:set_text(t)
+  check(type(t) == "string", "set_text needs string")
+  self.text = t
+end
 function Widget:set_value(v) int(v, "set_value") end
 function Widget:hidden(b) self.shown = not b end
 function Widget:style(t, sel)
@@ -94,7 +97,14 @@ badge = {
   ui = {
     screen_width = 320, screen_height = 240,
     label = function() return new_widget("label") end,
-    box = function() return new_widget("box") end,
+    -- Record the size a box is born with.  Without this, a widget that is
+    -- never passed through set_size has no .w and vanishes from the preview,
+    -- which is how the egg came to look like an empty screen.
+    box = function(_, w, h)
+      local b = new_widget("box")
+      b.w, b.h = w, h
+      return b
+    end,
     bar = function() return new_widget("bar") end,
     line = function() return new_widget("line") end,
     arc = function() return new_widget("arc") end,
@@ -124,6 +134,8 @@ badge = {
     badge_id = function() return "moon-honey-opal-bloom" end,
     provisioned = function() return true end,
   },
+  -- Note: this table IS the backing store.  Keys an app uses must not collide
+  -- with the four method names below.
   store = {
     get_int = function(k, d) return store[k] or d end,
     set_int = function(k, v) int(v, "store " .. k); store[k] = v end,
@@ -164,6 +176,15 @@ chunk()
 local root = new_widget("root")
 assert(on_enter, "app defines no on_enter")
 
+-- A badge that has already hatched.  Without this every run starts with an
+-- empty store, the app arms the egg at the current contact count, and the
+-- whole creature path goes untested.
+local hatched = false
+for i = 1, 4 do
+  if arg[i] == "hatched" then hatched = true end
+end
+if hatched then store.hatch = 0 end
+
 local ok, err = pcall(on_enter, root)
 check(ok, "on_enter errored: " .. tostring(err))
 
@@ -184,7 +205,11 @@ local built = widgets
 check(built > 5, "app never finished loading: only " .. built .. " widgets")
 
 -- Buttons, each followed by ticks so any queued work drains (A rescans).
-for _, b in ipairs({1, 2, 7, 4, 1, 9}) do
+-- LEFT and RIGHT are walked past both ends so the attribution cursor wraps
+-- through every segment and back to "none" in both directions.
+-- The trailing RIGHTs leave a segment picked, so a preview run shows what
+-- attribution actually says rather than the default summary line.
+for _, b in ipairs({1, 2, 7, 4, 6, 6, 6, 6, 5, 5, 5, 5, 1, 9, 6, 6}) do
   local o, e = pcall(on_button, b, 1)
   check(o, "on_button(" .. b .. ") errored: " .. tostring(e))
   if not ticks(80) then break end
@@ -215,6 +240,15 @@ if arg[3] == "preview" then
   print("+" .. string.rep("-", cols) .. "+")
   for r = 1, rows do print("|" .. table.concat(grid[r]) .. "|") end
   print("+" .. string.rep("-", cols) .. "+")
+
+  -- The silhouette cannot show words, and most of what this app says to the
+  -- user is a label. Dump the visible ones so a preview can be read.
+  print("text on screen:")
+  for _, w in ipairs(all) do
+    if w.shown and w.text and w.text ~= "" then
+      print("   " .. w.text)
+    end
+  end
 end
 
 print(("app       %s"):format(app_path))

@@ -152,14 +152,19 @@ end
 
 print("")
 print("### headless run (mock badge API)")
-for _, n in ipairs(MOCK_COUNTS) do
-  local out = sh(q(LUA) .. " test/mockbadge.lua " .. q(MOCK_APP) .. " " .. n)
-  if out and out:find("RESULT    pass") then
-    print(string.format("  %3d contacts  pass", n))
-  else
-    print(string.format("  %3d contacts  FAIL", n))
-    for l in (out or ""):gmatch("[^\n]+") do print("      " .. l) end
-    status = 1
+-- Both states matter.  An empty store arms the egg at the current contact
+-- count, so without the "hatched" run the whole creature path is never drawn.
+for _, mode in ipairs({{"egg", ""}, {"hatched", " hatched"}}) do
+  for _, n in ipairs(MOCK_COUNTS) do
+    local out = sh(q(LUA) .. " test/mockbadge.lua " .. q(MOCK_APP) .. " " .. n
+                   .. mode[2])
+    if out and out:find("RESULT    pass") then
+      print(string.format("  %-8s %3d contacts  pass", mode[1], n))
+    else
+      print(string.format("  %-8s %3d contacts  FAIL", mode[1], n))
+      for l in (out or ""):gmatch("[^\n]+") do print("      " .. l) end
+      status = 1
+    end
   end
 end
 

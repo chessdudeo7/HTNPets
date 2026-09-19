@@ -9,7 +9,9 @@ wake_lock=1
 
 -- Bump Pets -- your pet is made of the people you have met.
 -- Every Connect contact adds a body segment coloured from their badge id.
--- A rescan   B lights   Up/Dn brightness   HOME exit
+-- Everyone starts as an egg and hatches on their next bump, however many
+-- contacts they already had.  Left/Right name the person behind a segment.
+-- L/R who is who   A rescan   B lights   Up/Dn brightness   HOME exit
 --
 -- READ BEFORE EDITING.  This badge raises "Lua stack safety limit reached"
 -- when one callback does too much.  The vendor guide's remedy for that exact
@@ -40,6 +42,11 @@ local S = {
   nextf = 0, celeb = 0,
   led = true, lv = 170,
   seen = -1, dirty = false,
+  -- hatch is the contact count the egg was armed at, stored on first open.
+  -- Everyone starts as an egg and hatches on their NEXT bump, however many
+  -- contacts they already had.  egg is derived from it every scan.
+  hatch = -1, egg = true, cur = 0,
+  nm = {},   -- ring of contact names, parallel to R (attribution)
 }
 
 -- progress of the bounded work queue.  step 0 means ready.
@@ -47,8 +54,13 @@ local P = {step = 1, i = 1, fold = 7, hits = {}, made = false}
 
 local W = {}   -- named widgets
 local G = {}   -- body segment widgets
-local R = {}   -- ring of contact hashes
+local R = {}   -- ring of contact hashes; S.nm holds the names, in step
 local D = {}   -- segment diameters
+
+-- The ring slot for segment j is
+--   (S.total - S.segn + j - 1) % C.SEG + 1
+-- written out at both call sites rather than given a helper: a file-level
+-- local costs a main-chunk slot, and this app is two slots under the limit.
 
 local function hue(x)
   x = x % 360
@@ -136,8 +148,16 @@ local function scan_one()
   h = (h * 33 + (f or 23)) % 16777213
   h = (h * 33 + (g or 24)) % 16777213
   P.fold = (P.fold * 33 + h) % 16777213
-  R[(P.i - 1) % C.SEG + 1] = h
-  if type(c.name) == "string" then S.newest = c.name end
+  local slot = (P.i - 1) % C.SEG + 1
+  R[slot] = h
+  -- Only the ring's worth of names is kept, truncated.  Retaining every
+  -- contact record would be real money against the Lua heap.
+  local nm = "?"
+  if type(c.name) == "string" then
+    nm = string.sub(c.name, 1, 16)
+    S.newest = c.name
+  end
+  S.nm[slot] = nm
   P.i = P.i + 1
   return true
 end
@@ -145,8 +165,16 @@ end
 local function meta()
   S.fold = P.fold
   S.stage = stage_of(S.total)
+  -- Arm the egg at whatever count this badge already has, once, on the first
+  -- open.  A badge with forty contacts still gets to watch it hatch.
+  if S.hatch < 0 then
+    S.hatch = S.total
+    S.dirty = true
+  end
+  S.egg = S.total <= S.hatch
   local n = S.total
   if n > C.SEG then n = C.SEG end
+  if S.egg then n = 0 end
   S.segn = n
   if n > 0 then
     S.pr, S.pg, S.pb = hue(S.fold % 360)
@@ -179,19 +207,36 @@ local function style_seg(lo, hi)
   end
 end
 
+-- The one line under the pet.  Three states, so the callers never duplicate
+-- these strings: egg, a picked segment, or the default summary.
+local function stat_line()
+  if S.egg then
+    if S.total > 0 then
+      return S.total .. " friends waiting.  Bump one to hatch."
+    end
+    return "Open Connect and bump a badge to hatch"
+  end
+  if S.cur > 0 then
+    local slot = (S.total - S.segn + S.cur - 1) % C.SEG + 1
+    return "#" .. (S.total - S.segn + S.cur) .. "  " .. (S.nm[slot] or "?")
+  end
+  return "friends " .. S.total .. "    roles " .. S.roles
+end
+
 local function finish()
-  W.egg:hidden(S.stage > 0)
-  W.head:hidden(S.stage == 0)
-  W.e1:hidden(S.stage == 0)
-  W.e2:hidden(S.stage == 0)
+  W.egg:hidden(not S.egg)
+  W.head:hidden(S.egg)
+  W.e1:hidden(S.egg)
+  W.e2:hidden(S.egg)
+  W.prog:hidden(S.egg)
   W.head:style({bg_color = hex(S.pr, S.pg, S.pb), radius = 17,
                 border_width = 0})
-  W.title:set_text(S.petname .. "  -  stage " .. S.stage)
-  if S.stage > 0 then
-    W.stat:set_text("friends " .. S.total .. "    roles " .. S.roles)
+  if S.egg then
+    W.title:set_text(S.petname .. "  -  egg")
   else
-    W.stat:set_text("Open Connect and bump a badge to hatch")
+    W.title:set_text(S.petname .. "  -  stage " .. S.stage)
   end
+  W.stat:set_text(stat_line())
   local lo = C.AT[S.stage] or 0
   local hi = C.AT[S.stage + 1]
   local p = 100
@@ -201,9 +246,30 @@ local function finish()
   W.prog:set_value(p)
 end
 
+-- Attribution.  Left/Right walk the segments; the picked one gets a white
+-- outline and the line underneath names the person it was made from.  This is
+-- what makes the pet a portrait rather than a progress bar, so it is worth its
+-- two style calls.  Cursor 0 means nothing picked.
+local function pick(d)
+  if S.egg or S.segn == 0 then return end
+  local old = S.cur
+  local c = old + d
+  if c > S.segn then c = 0 elseif c < 0 then c = S.segn end
+  S.cur = c
+  if old > 0 and old <= S.segn then
+    G[old]:style({border_width = 0})
+  end
+  if c > 0 then
+    G[c]:style({border_color = 0xffffff, border_width = 3})
+  end
+  W.stat:set_text(stat_line())
+end
+
 local function celebrate(now)
   if S.seen >= 0 and S.total > S.seen then
-    if S.stage > stage_of(S.seen) then
+    if S.seen <= S.hatch and not S.egg then
+      W.banner:set_text("HATCHED")
+    elseif S.stage > stage_of(S.seen) then
       W.banner:set_text("EVOLVED   stage " .. S.stage)
     else
       W.banner:set_text("NEW FRIEND   " .. string.sub(S.newest, 1, 14))
@@ -218,7 +284,7 @@ local function celebrate(now)
 end
 
 local function draw(now)
-  if S.stage == 0 then
+  if S.egg then
     W.egg:set_pos(126, 52 + 6 * breath(now, 2600) // 100)
     return
   end
@@ -252,7 +318,7 @@ local function leds(now)
       local r, g, b = hue(now // 4 + i * 60)
       badge.led.set(C.CW[i], dim(r, q), dim(g, q), dim(b, q))
     end
-  elseif S.stage == 0 then
+  elseif S.egg then
     local q = lv * (1500 + 35 * breath(now, 3000)) // 10000
     badge.led.set(1, q, dim(180, q), dim(70, q))
     badge.led.set(2, q, dim(180, q), dim(70, q))
@@ -276,6 +342,7 @@ local function step(now)
     S.led = badge.store.get_int("led_on", 1) ~= 0
     S.lv = badge.store.get_int("led_lv", 170)
     S.seen = badge.store.get_int("seen", -1)
+    S.hatch = badge.store.get_int("hatch", -1)
     P.step = 2
   elseif s == 2 then
     local id = badge.me.badge_id()
@@ -326,7 +393,7 @@ local function step(now)
   elseif s == 12 then
     W.banner:align("top_mid", 0, 38)
     W.banner:hidden(true)
-    W.hint = badge.ui.label(W.bg, "A rescan   B lights   Up/Dn bright")
+    W.hint = badge.ui.label(W.bg, "L/R who is who   A rescan   B lights")
     P.step = 13
   elseif s == 13 then
     W.hint:style({text_font = 14, text_color = 0x5d6f80})
@@ -383,8 +450,14 @@ function on_button(button, kind)
   local B = badge.input.BUTTON
   if button == B.A then
     P.i, P.fold, P.hits = 1, 7, {}
-    S.total, S.roles = 0, 0
+    S.total, S.roles, S.cur = 0, 0, 0
     P.step = 3
+    return
+  elseif button == B.LEFT then
+    pick(-1)
+    return
+  elseif button == B.RIGHT then
+    pick(1)
     return
   elseif button == B.B then
     S.led = not S.led
@@ -406,6 +479,7 @@ function on_exit()
   badge.led.show()
   if S.dirty then
     badge.store.set_int("seen", S.seen)
+    badge.store.set_int("hatch", S.hatch)
     badge.store.set_int("led_on", S.led and 1 or 0)
     badge.store.set_int("led_lv", S.lv)
   end
