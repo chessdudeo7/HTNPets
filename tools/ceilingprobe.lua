@@ -16,27 +16,55 @@
 -- The real ceiling is somewhere in that band. check.lua's 13000 is a
 -- conservative guess, not a measurement.
 --
--- The padding is representative on purpose. A giant comment would be stripped
--- and a giant string literal would be one constant; neither loads the parser
--- the way real code does. Each padding unit is a small function with its own
--- prototype, constants and instructions, which is what actually costs memory.
--- They live in one table because a file-level local costs a main-chunk slot
--- and the slot ceiling is 25.
-
+-- The padding has to match the SHAPE of real code, not just its size.
+--
+-- The first version of this tool padded with many tiny functions, and it
+-- reported a failure at 13,750 that said nothing about the apps we care
+-- about. Measured:
+--
+--   apps/bump_pets.lua    14542 body bytes    21 prototypes    692 bytes each
+--   wip/animal.lua        15576 body bytes    19 prototypes    820 bytes each
+--   the old probe         13667 body bytes   137 prototypes    100 bytes each
+--
+-- Every Lua Proto carries fixed overhead: a constant array, upvalue
+-- descriptors, a code array, a nested-proto array and debug info. At 7 to 8
+-- times the prototype count, that probe was far more expensive per byte than
+-- any real app, so it hit the allocator early and measured its own shape.
+--
+-- So: few, large functions, at the same bytes-per-prototype as the real apps.
+-- Constants are varied deliberately, because identical literals get pooled
+-- into a single constant-table entry and would understate the cost.
 local SLUG = "ceil_probe"
+local DENSITY = 750   -- body bytes per prototype, from the table above
 
 local function header(size)
   return "--[==[badge-app\nslug=" .. SLUG .. "\nname=Ceiling " .. size
     .. "\nicon=CEIL\napi=2\nheap_kb=96\n]==]\n"
 end
 
--- One padding unit, about 90 bytes, carrying a prototype, three constants and
--- a dozen instructions.
-local function unit(n)
+-- One statement inside a padding function: a few instructions and two
+-- constants that differ from every other statement's.
+local function stmt(n)
   return string.format(
-    'P[%d]=function(a,b) local s="pad%04dxy" local t=a*%d+b%%%d '
-    .. 'if t>%d then t=t-%d end return s,t end\n',
-    n, n, 31 + n % 61, 7 + n % 23, 90 + n % 9, 90 + n % 9)
+    'v=a*%d+b//%d if v>%d then v=v-%d end t[#t+1]=v+%d\n',
+    31 + n % 97, 3 + n % 13, 200 + n % 55, 100 + n % 41, n % 29)
+end
+
+-- One padding function, built to an approximate byte size. Only two locals
+-- live at once, so the value-stack cost stays where real code puts it.
+local function unit(n, want)
+  local head = string.format('P[%d]=function(a,b)\nlocal v,t=%d,{}\n', n, n)
+  local foot = 'return v,t\nend\n'
+  local out, i = {head}, 0
+  local used = #head + #foot
+  while used < want do
+    i = i + 1
+    local ln = stmt(n * 1000 + i)
+    out[#out + 1] = ln
+    used = used + #ln
+  end
+  out[#out + 1] = foot
+  return table.concat(out)
 end
 
 local function tail(size)
@@ -68,27 +96,44 @@ local function build(size)
       .. "itself", size, fixed)
   end
 
-  -- Add whole units until one more would overshoot.
+  -- Enough functions to land at the real apps' bytes-per-prototype.
+  local want = size - fixed
+  local count = math.max(1, math.floor(want / DENSITY))
+
   local body, n = {}, 0
   local used = fixed
-  while true do
-    local u = unit(n + 1)
+  while n < count do
+    local u = unit(n + 1, want // count)
     if used + #u > size then break end
     n = n + 1
     body[n] = u
     used = used + #u
   end
+  if n == 0 then
+    return nil, "target too small to pad at this density"
+  end
 
-  -- Close the remaining gap by stretching one unit's string literal, so the
-  -- file lands on the target exactly rather than near it.
+  -- Close the remainder with single statements, then one comment to land on
+  -- the target exactly. A trailing comment is the only filler that cannot
+  -- change the instruction stream, and it is the last few bytes only.
+  local i = 0
+  while true do
+    i = i + 1
+    local ln = stmt(900000 + i)
+    if used + #ln + #foot > size then break end
+    -- Append inside the last function, before its return.
+    body[n] = body[n]:gsub("return v,t\n", ln .. "return v,t\n", 1)
+    used = used + #ln
+  end
+
   local gap = size - used
   if gap > 0 then
-    if n == 0 then
-      return nil, "target too small to pad exactly"
+    if gap < 3 then
+      return nil, string.format("cannot land on %d exactly (%d bytes short of "
+        .. "a clean fill); try a size 3 or more away", size, gap)
     end
-    local u = body[n]
-    body[n] = u:gsub('"pad(%d+)xy"', '"pad%1' .. string.rep("z", gap) .. 'xy"', 1)
-    used = used + gap
+    body[n + 1] = "--" .. string.rep("x", gap - 3) .. "\n"
+    used = size
   end
 
   return head .. table.concat(body) .. foot, nil, n
