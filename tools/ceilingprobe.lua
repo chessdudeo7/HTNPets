@@ -34,11 +34,14 @@
 -- So: few, large functions, at the same bytes-per-prototype as the real apps.
 -- Constants are varied deliberately, because identical literals get pooled
 -- into a single constant-table entry and would understate the cost.
-local SLUG = "ceil_probe"
+-- One slug per size, so several probes can be installed at once. That matters
+-- for the post-bump test: pushing needs USB, bumping needs another badge in
+-- the room, and a shared slug would force a reconnect between every attempt.
+local function slug(size) return "ceil" .. size end
 local DENSITY = 750   -- body bytes per prototype, from the table above
 
 local function header(size)
-  return "--[==[badge-app\nslug=" .. SLUG .. "\nname=Ceiling " .. size
+  return "--[==[badge-app\nslug=" .. slug(size) .. "\nname=Ceiling " .. size
     .. "\nicon=CEIL\napi=2\nheap_kb=96\n]==]\n"
 end
 
@@ -173,6 +176,6 @@ for _, size in ipairs(targets) do
   end
 end
 print("")
-print("All share the slug " .. SLUG .. ", so they overwrite each other and")
-print("never touch htn_bump_pets. Reboot between pushes: a failed Lua state")
-print("can leave memory retained, which would bias the next result.")
+print("Each has its own slug (ceilNNNNN), so they can all be installed at once")
+print("and none of them touches htn_bump_pets. For a clean-boot measurement,")
+print("reboot between attempts: a failed Lua state can leave memory retained.")
