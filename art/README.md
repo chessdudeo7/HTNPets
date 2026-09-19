@@ -28,3 +28,21 @@ roughly a 15x15 image however much care goes into the source.
   palette size per file. One global setting cannot serve both: the forest is
   muddy and needs pushing apart, while the night scene turns neon under the
   same treatment.
+
+## The launcher icon
+
+`icon.png` is 42x42, the size the badge wants. Feed it to the IDE's
+**Choose image**, which converts it to the `icon.bin` the launcher reads
+and overrides the manifest's text icon.
+
+```bash
+python3 tools/iconmake.py
+```
+
+That also writes `icon_preview.png` at 8x for looking at, since 42 pixels
+is hard to judge at actual size.
+
+At this size there is room for one idea: the animal's head against the
+night it is painting. Body, tail and feet are left out rather than
+rendered as mud. It is drawn at 8x and downscaled so the curves are
+antialiased instead of staircased.
