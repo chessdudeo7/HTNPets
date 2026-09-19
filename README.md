@@ -11,16 +11,9 @@ its workspace lives in browser localStorage, so nothing is safe there.
 | `apps/bump_pets.lua` | `htn_bump_pets` | The pet. A creature built from your Connect contacts. |
 | `apps/bump_probe.lua` | `bump_probe` | Read-only diagnostic. Push this first on a new badge. |
 
-`wip/animal.lua` is an unfinished redesign that replaces the segmented worm
-with a round animal — four species, contacts as coloured spots, blinking.
-It is complete and passes the headless harness. At 15,670 bytes of source it
-was 2,670 over the compile-memory ceiling and died in `main.lua` on the badge.
-
-**Minified it is 12,524 bytes, which is under the ceiling with 476 to spare.**
-That is worth one push to find out, but treat it as untested: 13,000 is a
-conservative line drawn between one measurement that ran (11,575) and one that
-failed (15,670), so 12,524 sits in the band nobody has probed. If it dies in
-`main.lua`, the ceiling is real and lower than 12,524 — record the number.
+`apps/bump_pets.lua` used to be a segmented worm, and `wip/animal.lua` an
+unfinished round-animal redesign shelved for being over the compile-memory
+ceiling. The animal became the app; the worm is in git history.
 
 Each file is a complete app in the single-file format: the `--[==[badge-app`
 header becomes `manifest.cfg`, everything after `]==]` becomes `main.lua`.
@@ -53,9 +46,9 @@ mismatch fails the build instead of shipping a guess.
 This matters because the compile-memory ceiling is spent on **source bytes**,
 and comments cost a reader nothing while costing the badge real RAM:
 
-| | source | dist | headroom to 13,000 |
-| --- | --- | --- | --- |
-| `apps/bump_pets.lua` | 11,575 | 9,376 | 3,624 |
+| | source | dist | ceiling | headroom |
+| --- | --- | --- | --- | --- |
+| `apps/bump_pets.lua` | 22,090 | 14,458 | 14,500 | 42 |
 
 ### Test variants
 
@@ -78,57 +71,27 @@ costs registry memory, and this app has very little to spare.
 ceiling in `check.lua` is measured against `dist/`. `dist/` is gitignored, and
 `lua check.lua` regenerates it, so run the gate before you copy.
 
-### Finding the real ceiling
+### The ceiling
 
-Measured on hardware with `tools/ceilingprobe.lua`:
+**Read [`docs/HARDWARE.md`](docs/HARDWARE.md) before changing `SRC_CEILING`.**
+It holds the measurements, and they are not what anyone expects: the limit is
+the largest contiguous block rather than a byte count, it moves with whatever
+ran before, and prototype count is a second budget worth about 112 bytes each.
 
-| file bytes | prototypes | `lua_used` | free heap | result |
-| --- | --- | --- | --- | --- |
-| 11,575 | 21 | - | - | loads |
-| 12,524 | 19 | - | - | loads (`wip/animal.lua`) |
-| 13,750 | **137** | 60,864 | - | **fails** |
-| 13,750 | 18 | 47,581 | 23,464 | loads |
-| 15,670 | 19 | 51,596 | 18,920 | loads |
-| 15,670 | 19 | - | - | **failed once**, on a fragmented heap |
-
-**There are two budgets, not one.** Each source byte costs about 2.09 bytes of
-`lua_used`, and **each prototype costs about 112 bytes on top**. The two 13,750
-rows are the same size and differ only in function count: 137 tiny functions
-against 18 realistic ones, and 13,283 bytes of Lua memory between them. The
-practical consequence for app code is that splitting logic into many small
-helpers is not free.
-
-**The ceiling is not a fixed number.** `wip/animal.lua` failed at 15,670 once
-and a probe of the same size and shape passed later from a clean boot. The
-failure is the system allocator, not the quota - `used` is far below `limit`
-when it happens, and what runs out is the largest contiguous block. So it
-depends on how fragmented the heap is at launch. **Reboot before judging a
-result.** `check.lua` sits at 14,500, a little over 1 KB below the highest
-pass, because the gate wants the largest size that survives a bad heap rather
-than the best case.
-
-Extrapolating the two clean data points, free heap would reach zero near
-23,600 body bytes, but it will fail well before that.
+To measure a size yourself:
 
 ```bash
-lua tools/ceilingprobe.lua 13750
+lua tools/ceilingprobe.lua 14500
 ```
 
-That writes `dist/ceil_13750.lua`, an app padded to exactly that size with
-representative code. Push it, open it, and read the screen:
+That writes `dist/ceil_14500.lua`, padded to exactly that size with code of
+realistic shape. Each probe carries its own slug, so several install side by
+side and none of them touches `htn_bump_pets`. Push, open, and read the screen:
+it prints its size and heap stats, or dies in `main.lua`.
 
-- **It opens** and prints its size and heap stats. That size is proven good.
-- **It dies in `main.lua`** with `Lua memory limit exceeded` before `on_enter`
-  runs. That size is proven bad.
-
-Test the size you actually want first, not the midpoint - if 13,750 loads
-there is nothing left to search. Only bisect downward if it fails. Every probe
-shares the slug `ceil_probe`, so they overwrite each other and never touch
-`htn_bump_pets`. **Reboot between pushes:** a failed Lua state can leave memory
-retained, which biases the next result.
-
-Record what you find in the table above and raise `SRC_CEILING` in `check.lua`
-to the highest proven-good size, minus a margin.
+**Reboot first, and delete the probes afterwards.** Both of those changed the
+answer here: a fragmented heap failed a size that passed from a clean boot, and
+four installed probes were enough to stop the real app loading.
 
 ### A note on byte counts
 
@@ -174,25 +137,21 @@ Pick **USB JTAG/serial debug unit** in the device picker.
 - `[push] reload confirmed` means uploaded and rescanned, **not** that the app
   ran. Read the badge screen and the console too.
 
-## Hard-won constraints
+## Constraints
 
-Learned on hardware, mostly the painful way:
+The memory ones - the ceiling, why it moves, what Connect does to the heap -
+are in [`docs/HARDWARE.md`](docs/HARDWARE.md), measured. They are not repeated
+here; the copy nobody amends is the one someone reads.
+
+The rest:
 
 - **"Lua stack safety limit reached" is about value-stack slots**, not about
   loops or heap. Keep the main chunk and every function under ~25 slots. State
-  belongs in a few tables, not in dozens of file-level locals — each local
+  belongs in a few tables, not in dozens of file-level locals - each local
   costs a main-chunk slot and an upvalue in every function that reads it.
   Measure with `luac -l apps/bump_pets.lua | grep slots`.
 - **Never wrap `string.byte` in a loop.** Fetch bytes in bulk.
-- **Source size has a hard ceiling around 12-13 KB.** The whole chunk is
-  parsed and compiled before any callback runs, and that peak is what blows.
-  Measured: 11,575 bytes compiles and runs; 15,670 bytes gives
-  `Lua memory limit exceeded` in `main.lua` with `used 42761 / limit 98304`.
-  `used < limit` there means the system allocator failed, not the quota, so
-  raising `heap_kb` cannot help. `check.lua` fails above 13,000 bytes.
-- `lua_used` is roughly `19000 + 2 x source bytes`. A 17 KB source left only
-  16 KB of system heap free.
-- `heap_kb=96` is required, not optional — this app does not fit in 48 KB.
+- `heap_kb=96` is required, not optional - this app does not fit in 48 KB.
 - **Contacts carry no usable `received_unix`** on this firmware, so contact
   index order is the only ordering available.
 - `badge_id` is a 23-character word slug like `moon-honey-opal-bloom`.
