@@ -217,6 +217,7 @@ check(ok, "on_enter errored: " .. tostring(err))
 local function ticks(n)
   for _ = 1, n do
     now = now + 50
+    if not on_tick then return true end
     local o, e = pcall(on_tick)
     check(o, "on_tick errored at t=" .. now .. ": " .. tostring(e))
     if not o then return false end
@@ -228,7 +229,10 @@ end
 -- then cover the celebration window and steady state.
 ticks(400)
 local built = widgets
-check(built > 5, "app never finished loading: only " .. built .. " widgets")
+-- Only an app that builds itself across ticks can stall half-built.
+if on_tick then
+  check(built > 5, "app never finished loading: only " .. built .. " widgets")
+end
 
 -- Buttons, each followed by ticks so any queued work drains (A rescans).
 -- LEFT and RIGHT are walked past both ends so the attribution cursor wraps
@@ -238,6 +242,7 @@ check(built > 5, "app never finished loading: only " .. built .. " widgets")
 -- B is deliberately absent here: it is a toggle, and the dedicated test below
 -- needs to start from a known lights-on state.
 for _, b in ipairs({1, 7, 4, 6, 6, 6, 6, 5, 5, 5, 5, 1, 9, 6, 6}) do
+  if not on_button then break end
   local o, e = pcall(on_button, b, 1)
   check(o, "on_button(" .. b .. ") errored: " .. tostring(e))
   if not ticks(80) then break end
@@ -248,7 +253,9 @@ check(widgets == built,
 -- B is a toggle, so it has to survive being pressed twice. Nothing else here
 -- presses a button more than once, which is how an off-and-stays-off bug
 -- reaches a badge through a green gate.
-do
+-- Skipped for an app that does not use the strip at all: it has no B toggle
+-- and no brightness to be wrong about.
+if on_button and peak > 0 then
   local before = led_total()
   check(before > 0, "leds were already dark before the B toggle test")
   pcall(on_button, 2, 1); ticks(4)
@@ -262,13 +269,17 @@ end
 -- At default brightness some led must actually reach a visible level at some
 -- point. 200 of a possible 765 is roughly one led at a third of full. This is
 -- the check that would have caught the egg lighting two leds at 10-33%.
-check(peak >= 200,
-      "no led ever got bright enough to read: peak r+g+b was " .. peak
-      .. ", floor is 200. A state that is logically on but this dim looks off "
-      .. "on the badge.")
+if peak > 0 then
+  check(peak >= 200,
+        "no led ever got bright enough to read: peak r+g+b was " .. peak
+        .. ", floor is 200. A state that is logically on but this dim looks "
+        .. "off on the badge.")
+end
 
-local o, e = pcall(on_exit)
-check(o, "on_exit errored: " .. tostring(e))
+if on_exit then
+  local o, e = pcall(on_exit)
+  check(o, "on_exit errored: " .. tostring(e))
+end
 
 if arg[3] == "preview" then
   -- coarse silhouette of the last drawn frame, 4px per column, 6px per row

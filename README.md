@@ -61,6 +61,32 @@ and comments cost a reader nothing while costing the badge real RAM:
 ceiling in `check.lua` is measured against `dist/`. `dist/` is gitignored, and
 `lua check.lua` regenerates it, so run the gate before you copy.
 
+### Finding the real ceiling
+
+13,000 is a conservative line, not a measurement. Known on hardware: 11,575
+loads, 12,524 loads, 15,670 fails. The real boundary is somewhere in between,
+and it decides whether the `wip/animal.lua` redesign fits.
+
+```bash
+lua tools/ceilingprobe.lua 13750
+```
+
+That writes `dist/ceil_13750.lua`, an app padded to exactly that size with
+representative code. Push it, open it, and read the screen:
+
+- **It opens** and prints its size and heap stats. That size is proven good.
+- **It dies in `main.lua`** with `Lua memory limit exceeded` before `on_enter`
+  runs. That size is proven bad.
+
+Test the size you actually want first, not the midpoint - if 13,750 loads
+there is nothing left to search. Only bisect downward if it fails. Every probe
+shares the slug `ceil_probe`, so they overwrite each other and never touch
+`htn_bump_pets`. **Reboot between pushes:** a failed Lua state can leave memory
+retained, which biases the next result.
+
+Record what you find in the table above and raise `SRC_CEILING` in `check.lua`
+to the highest proven-good size, minus a margin.
+
 ### A note on byte counts
 
 `wc -c` and `check.lua` disagree by exactly the line count. `core.autocrlf` is
