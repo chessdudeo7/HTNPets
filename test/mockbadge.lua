@@ -12,6 +12,10 @@ local app_path = arg[1] or "apps/bump_pets.lua"
 local n_contacts = tonumber(arg[2]) or 12
 
 local fails, widgets = {}, 0
+-- Non-zero border styles applied, for the gate. Declared up here because
+-- Widget:style below increments it, and a local declared after its use
+-- silently becomes a nil global.
+local borders = 0
 local function check(ok, msg)
   if not ok then fails[#fails + 1] = msg end
 end
@@ -97,6 +101,7 @@ function Widget:style(t, sel)
     self.st = self.st or {}
     for k, v in pairs(t) do self.st[k] = v end
   end
+  if (t.border_width or 0) > 0 then borders = borders + 1 end
 end
 
 local heapmode = nil    -- set from argv below; declared here so that
@@ -217,7 +222,7 @@ assert(on_enter, "app defines no on_enter")
 -- A badge that has already hatched.  Without this every run starts with an
 -- empty store, the app arms the egg at the current contact count, and the
 -- whole creature path goes untested.
-local hatched = false
+local hatched, met = false, false
 for i = 1, 5 do
   if arg[i] == "hatched" then hatched = true end
   -- An app that sizes itself to free_heap needs its low-memory path walked,
@@ -225,8 +230,16 @@ for i = 1, 5 do
   if arg[i] == "lowheap" then heapmode = 18000 end
   -- Less than the app reserves, so the floor has to hold.
   if arg[i] == "starved" then heapmode = 4000 end
+  -- Pretend one contact arrived since the last open, so the celebration
+  -- path runs. Without it the store is empty, seen is -1, and nothing
+  -- that only happens on a new friend is ever exercised.
+  if arg[i] == "met" then met = true end
 end
 if hatched then store.hatch = 0 end
+if met then
+  store.hatch = 0
+  store.seen = n_contacts - 1
+end
 
 local ok, err = pcall(on_enter, root)
 check(ok, "on_enter errored: " .. tostring(err))
@@ -332,6 +345,7 @@ end
 print(("app       %s"):format(app_path))
 print(("contacts  %d"):format(n_contacts))
 print(("widgets   %d / 512"):format(widgets))
+print(("borders   %d applied"):format(borders))
 print(("logs      %d line(s)"):format(#logs))
 for _, l in ipairs(logs) do print("   " .. l) end
 if #fails == 0 then

@@ -214,6 +214,29 @@ for _, m in ipairs({"", " lowheap", " starved"}) do
   end
 end
 
+-- Meeting someone should visibly mark the strokes they painted. The button
+-- walk sets borders too, so this is differential: the run where a contact
+-- arrived since the last open must apply more of them than the run where
+-- nothing changed.
+do
+  local function borders_for(flags)
+    local out = sh(q(LUA) .. " test/mockbadge.lua " .. q(MOCK_APP) .. " 9 "
+                   .. flags)
+    return tonumber(out and out:match("borders%s+(%d+)") or "-1"),
+           out and out:find("RESULT    pass")
+  end
+  local plain, okp = borders_for("hatched")
+  local met, okm = borders_for("hatched met")
+  if okp and okm and met > plain then
+    print(string.format("  new friend    pass  (%d borders vs %d with no one "
+                        .. "new)", met, plain))
+  else
+    print(string.format("  new friend    FAIL  (%d borders vs %d) - meeting "
+                        .. "someone did not mark their strokes", met, plain))
+    status = 1
+  end
+end
+
 -- Variants ship, so they are gated too. A patch that stops matching is caught
 -- by build.lua; this catches one that matches but breaks the app.
 do
